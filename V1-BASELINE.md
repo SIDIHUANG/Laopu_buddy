@@ -2,6 +2,8 @@
 
 ## 📌 下次开工指引（新对话第一件事就看这里）
 
+> **未解决问题的完整清单与最新进展见 [OPEN-ISSUES.md](OPEN-ISSUES.md)** —— 先读那一份。
+
 **把下面这句话直接粘进新对话即可**（不需要重新解释项目背景）：
 
 > 读 `C:\Users\Asus\Desktop\dsh_test\laopu_ds\V1-BASELINE.md`。

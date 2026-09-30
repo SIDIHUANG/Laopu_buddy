@@ -111,9 +111,14 @@
         transform-origin: 50% 100%;
         pointer-events: none;
         opacity: 0;
+        /* 必须压在气泡之下：气泡的尾巴要搭在她头顶上。
+           之前没写 z-index，而这两层在 DOM 里排在 #bubble-list 之后，
+           于是把气泡盖住了（用户实测：气泡跑到小人后面）。 */
+        z-index: 0;
         /* 刻意不用 will-change / translateZ：那会把图层提升到 GPU，
            正是这次要绕开的东西 */
       }
+      #bubble-list { position: relative; z-index: 1; }
       /* 只有台词的点击气泡没有正文，别留一行空白 */
       .bubble .text:empty { display: none; }
       #collapsed-count { font-size: 11px; color: #9aa1ac; margin-top: 2px; }

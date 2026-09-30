@@ -1,5 +1,37 @@
 # 普瑞塞斯桌宠 · v1 基线
 
+## 📌 下次开工指引（新对话第一件事就看这里）
+
+**把下面这句话直接粘进新对话即可**（不需要重新解释项目背景）：
+
+> 读 `C:\Users\Asus\Desktop\dsh_test\laopu_ds\V1-BASELINE.md`。
+> 当前状态：v1 可用并已提交（git tag `v1-baseline`）。
+> 请从「3. 未解决的问题 → 问题 1：托盘图标不显示」开始，按里面的"下次的下一步"继续排查。
+
+**先读这两个文件就够了**：
+1. 本文档 —— 功能现状 / 未解决问题（含 file:line 锚点）/ 下次步骤 / **第 5 节：9 个已经踩过的坑**（不看会重犯）
+2. `README.md` —— 架构与环境说明
+
+**开工前的三件事**：
+```powershell
+cd C:\Users\Asus\Desktop\dsh_test\laopu_ds
+git log --oneline -1                     # 确认仍在 v1-baseline 上
+python tools\build_web.py                # 前端语法门禁 + 打包 dist
+node app\test\logic.test.mjs             # 冒烟：应 43/43 通过
+```
+
+**⚠️ 启动桌宠必须重定向输出**（否则命令会一直挂着，这是上次浪费最多时间的地方）：
+```powershell
+$env:WEBVIEW2_USER_DATA_FOLDER = (Join-Path (Get-Location) "runtime\webview2")
+Start-Process -FilePath "v1\presage-pet.exe" `
+  -RedirectStandardOutput "runtime\pet.out.log" -RedirectStandardError "runtime\pet.err.log"
+```
+
+**唯一还没定的结论**：由用户**自己双击 `v1\启动桌宠.bat`** 时，`Shell_NotifyIcon` 是否仍返回
+`GetLastError=5`。用户界面上的日志（`v1\runtime\pet.out.log` 里 `[tray]` 那几行）就是判据。
+
+---
+
 > 基线日期：2026-10-01 · 版本：v1（可用，带一个未解决的环境级问题）
 > git 基线：提交 `9c4da40`（2214 个文件，工作区干净）
 > 用法：双击 `v1\启动桌宠.bat`（或根目录的 `启动桌宠.bat`）

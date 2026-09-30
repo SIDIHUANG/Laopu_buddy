@@ -19,6 +19,7 @@
         "transparent": true,
         "alwaysOnTop": true,
         "skipTaskbar": true,
+        "additionalBrowserArgs": "--disable-gpu",
         "shadow": false,
         "focus": false
       }

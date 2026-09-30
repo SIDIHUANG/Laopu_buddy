@@ -24,19 +24,30 @@ const LIFT = {
 };
 
 /**
- * 画布上方预留的空白比例。提拉最狠时角色顶部会上移约
- * (stretchY + liftY) × size ≈ 26% × 200px，留 34% 才不会被裁到头顶。
+ * 画布上方预留的空白比例。
+ *
+ * v1.1 起固定为 0，也就是**画布、命中盒、精灵格三者同尺寸（都是 size×size）**。
+ * 为什么不再留白：
+ *   * 留白（当时是 34%，268px 高）并不会让"提拉时不裁头"更好 —— 提拉是 CSS
+ *     transform，本来就不受画布限制（图层默认 overflow: visible），
+ *     真正会被裁的是窗口，而窗口高度是按角色实际占高算的；
+ *   * 但它会让命中盒比可见角色高一截：size=480 时命中盒 643px > 窗口 586px，
+ *     于是 `#pet-hit` 跑到窗口上方（self-check 直接报 裁掉=76px），
+ *     遮罩坐标和眼睛看到的位置随之错开。
+ * 三者同尺寸之后，"遮罩坐标 == 可见坐标" 是结构性成立的，不靠调参。
  */
-const HEADROOM = 0.34;
+const HEADROOM = 0;
 
 export class PetRenderer {
-  constructor(canvas, lib, { size = 200, view = null, hit = null } = {}) {
+  constructor(canvas, lib, { size = 200, view = null, hit = null, stage = null } = {}) {
     this.canvas = canvas;
     /**
-     * 可见的占位盒（和画布同尺寸）。canvas 本身已经不在 DOM 里了：
+     * 可见的占位盒。canvas 本身已经不在 DOM 里了：
      * 它只负责"像素"（命中遮罩读它），坐标与拖拽交给这个盒子。
      */
     this.hit = hit;
+    /** #stage：所有位置写进它的 CSS 变量，渲染器不直接碰元素坐标 */
+    this.stage = stage;
     // willReadFrequently：指针遮罩要不断 getImageData 读 alpha，
     // 不开这个每次都会从 GPU 回读，白白浪费。
     this.ctx = canvas.getContext('2d', { willReadFrequently: true });
@@ -88,35 +99,39 @@ export class PetRenderer {
   resize() {
     const dpr = window.devicePixelRatio || 1;
     this.dpr = dpr;
-    // 画布比精灵格高一截：提拉时角色要向上窜 50 多 px，
-    // 没有这块留白就会被画布顶边**把头裁掉**（实测踩过）。
+    /**
+     * 画布与可见精灵层**必须同尺寸同锚点**：命中遮罩是拿画布像素按可见盒
+     * 归一化的（pointer.js buildMask），两者一旦不一致，点得到的位置就和她
+     * 实际站的位置错开（v1 就是画布 268px、层 200px，错了一段）。
+     *
+     * 画布比精灵格高一截是有用的：提拉时角色要向上窜 50 多 px，
+     * 没有留白就会被画布顶边**把头裁掉**（实测踩过）。
+     */
     this.height = Math.round(this.size * (1 + HEADROOM));
     this.canvas.width = Math.round(this.size * dpr);
     this.canvas.height = Math.round(this.height * dpr);
-    // 画布不在 DOM 里，尺寸只体现在位图上；可见尺寸给占位盒
-    if (this.hit) {
-      this.hit.style.width = `${this.size}px`;
-      this.hit.style.height = `${this.height}px`;
-    }
+    // 画布不在 DOM 里，尺寸只体现在位图上；可见位置全部交给 CSS 变量，
+    // 由 #stage 上的 --pet-* 决定（见 index.html 顶部的布局约定）。
+    this.publishLayout();
     this.prev.width = this.canvas.width;
     this.prev.height = this.canvas.height;
     this.applyBaseTransform();
     this.layoutDom();
   }
 
-  /** 把两层 DOM 精灵对齐到可见盒（贴底，留出上方提拉空间） */
+  /** 把尺寸写进 #stage 的 CSS 变量：命中盒、精灵层、气泡位置都以它为准 */
+  publishLayout() {
+    const s = this.stage || document.getElementById('stage');
+    if (!s) return;
+    s.style.setProperty('--pet-size', `${this.size}px`);
+    s.style.setProperty('--pet-canvas-h', `${this.height}px`);
+  }
+
+  /** 两层 DOM 精灵的位置完全由 CSS 变量决定，这里只需在尺寸变化后重排一次 */
   layoutDom() {
     if (!this.view) return;
-    const box = this.hit || this.canvas;
-    const left = box.offsetLeft;
-    const top = box.offsetTop + (this.height - this.size);
-    for (const el of [this.view.prev, this.view.cur]) {
-      if (!el) continue;
-      el.style.left = `${left}px`;
-      el.style.top = `${top}px`;
-      el.style.width = `${this.size}px`;
-      el.style.height = `${this.size}px`;
-    }
+    // 触发一次样式重算，确保 CSS 变量生效后 #pet-hit 的几何是最新的
+    void (this.hit || this.view.cur)?.offsetWidth;
   }
 
   applyBaseTransform() {
@@ -182,7 +197,9 @@ export class PetRenderer {
     const s = this.size;
     const frames = Math.max(1, info.frames | 0);
     cur.style.backgroundSize = `${frames * s}px ${s}px`;
-    cur.style.backgroundPosition = `-${(((idx % frames) + frames) % frames) * s}px 0`;
+    // 只设 X：Y 由 CSS 的 --pet-bg-y 统一给（= size * margin），
+    // 让眼睛看到的角色和命中遮罩用的是同一个锚点。
+    cur.style.backgroundPosition = `-${(((idx % frames) + frames) % frames) * s}px var(--pet-bg-y)`;
     cur.style.transform = this.domTransform();
     // 交叉淡化：新画面淡入、旧画面淡出（用内联 opacity 逐帧推进，
     // 不依赖 CSS transition —— 少一个合成器特性就少一个失败点）

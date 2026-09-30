@@ -31,11 +31,14 @@ const esc = (s) => String(s).replace(/[&<>"']/g,
 export class SettingsPanel {
   constructor({
     bridge = 'http://127.0.0.1:8792', onLog, onResize, lines, onProviderChanged,
-    usageBroadcast, appearance,
+    usageBroadcast, appearance, maxSize = 480,
   } = {}) {
     this.bridge = bridge.replace(/\/$/, '');
     this.onLog = onLog || (() => {});
     this.onResize = onResize || null;
+    // 角色尺寸上限由屏幕可用高度决定（窗口必须装得下她 + 气泡），
+    // 滑块直接用这个上限，避免用户拉到一个放不下的值还以为是自己调坏了。
+    this.maxSize = Math.max(100, Math.round(maxSize));
     this.lines = lines || null;
     this.onProviderChanged = onProviderChanged || null;
     this.usageBroadcast = usageBroadcast || null; // { get(), set(on) }
@@ -376,8 +379,9 @@ export class SettingsPanel {
     return `
       <form class="inline" id="appearance-form">
         <label class="field"><span>大小</span>
-          <input type="range" name="size" min="100" max="360" step="10" value="${a.size ?? 200}">
-          <b class="val">${a.size ?? 200}px</b>
+          <input type="range" name="size" min="100" max="${this.maxSize}" step="10"
+                 value="${Math.min(a.size ?? 200, this.maxSize)}">
+          <b class="val">${Math.min(a.size ?? 200, this.maxSize)}px</b>
         </label>
         <label class="field"><span>透明度</span>
           <input type="range" name="opacity" min="0.3" max="1" step="0.05" value="${a.opacity ?? 1}">

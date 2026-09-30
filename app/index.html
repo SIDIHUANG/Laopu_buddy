@@ -15,13 +15,47 @@
       html, body { margin: 0; height: 100%; background: transparent; overflow: hidden; }
       body {
         font: 13px/1.55 system-ui, "Microsoft YaHei", sans-serif;
-        display: flex; align-items: flex-end; justify-content: center;
       }
-      #stage { position: relative; display: flex; flex-direction: column; align-items: center; }
+      /* ------------------------------------------------------------------
+         布局约定（v1.1 重写，务必保持）
+         ------------------------------------------------------------------
+         以前用「flex 居中 + 气泡负 margin」把角色和气泡叠在一起，问题有三个：
+           1. 角色位置取决于气泡高度 —— 气泡一变高就把角色整体往下推出窗口；
+           2. 角色不再居中后 `#pet-cur` 会落到窗口底边之外，被窗口**硬裁掉**
+              （实测：窗口底边切在胸口，用户看到的就是"她只剩半截/整个没了"）；
+           3. `#bubble-list` 的负 margin 是 JS 用 boot 时刻量到的画布尺寸算的，
+              谁先在启动竞态里跑、量到的是哪一帧，会直接决定角色在屏幕上的位置。
+
+         现在改成**全绝对定位 + 底部锚定**：
+           #stage  == 整个窗口，坐标与窗口一一对应（position:absolute; inset:0）
+           #pet-hit / .pet-layer 同尺寸同底边（bottom: --pet-bottom）
+                                   → 精灵格底边固定，角色脚底永远在窗口内
+           #bubble-list 从窗口底边向上量到「头顶 + 一点重叠」，气泡绝不推挤角色
+         需要的尺寸全部由 JS 写成 CSS 变量（--pet-size / --pet-canvas-h /
+         --pet-bottom / --bubble-bottom），改尺寸时只改变量，不改元素坐标。
+         ------------------------------------------------------------------ */
+      #stage {
+        position: absolute; inset: 0;
+        --pet-size: 200px;
+        --pet-canvas-h: 268px;
+        /* 素材管线把角色脚底放在格子底边往上 4%（margin=0.04），
+           所以整个精灵格要往下挪这么多，脚底才正好落在命中盒底边。 */
+        --pet-bg-y: calc(var(--pet-size) * 0.04);
+        --pet-bottom: calc(var(--pet-size) * 0.04);
+        --bubble-bottom: 240px;
+      }
       #bubble-list {
+        position: absolute; left: 0; right: 0;
+        bottom: var(--bubble-bottom);
         display: flex; flex-direction: column; gap: 4px; align-items: center;
-        /* 负外边距把气泡压下来，让尾巴盖住小人的头一点——像她在说话 */
-        margin-bottom: -20px; width: max-content; max-width: 100%;
+        width: 100%;
+        /* 必须压在角色之上：气泡的尾巴要搭在她头顶上。
+           ⚠️ 只在这里写一次 position/z-index。v1 曾经在下面又写了一条
+           `#bubble-list { position: relative; z-index: 1 }`，它的 position
+           把这里的 absolute 覆盖掉了 —— 于是 bottom 失效、气泡跑到窗口上方
+           （实测 bubble.y = -226），而"尾巴压住头顶"看起来还是对的，
+           所以光看数值很难发现。 */
+        z-index: 1;
       }
       .bubble {
         /* border-box 很关键：否则 max-width 只算内容盒，
@@ -96,7 +130,15 @@
       .bubble .text { color: #c8ccd4; font-size: 12px; margin-top: 1px; }
       .bubble .hint { display: block; font-size: 11px; color: #a9b0bb; font-weight: normal; }
       .bubble.merged { cursor: pointer; }
-      #pet-hit { display: block; cursor: grab; }
+      /* 角色的命中盒：和画布同尺寸同锚点（遮罩就是按这个盒归一化的）。
+         底边离窗口底边 --pet-bottom：角色脚底（格子底部 4% 是素材留白）
+         正好落在这里，所以无论气泡多高、状态怎么切，她都不会被窗口裁到。 */
+      #pet-hit {
+        display: block; cursor: grab;
+        position: absolute; left: 50%; transform: translateX(-50%);
+        width: var(--pet-size); height: var(--pet-canvas-h);
+        bottom: var(--pet-bottom);
+      }
       #pet-hit:active { cursor: grabbing; }
       /* 可见的角色**不再由 canvas 绘制**。
          实测（用户机器）：canvas 的像素是对的（命中遮罩 hitmask filled 非 0），
@@ -104,9 +146,15 @@
          而且把它 opacity:0 藏起来后，连它的像素都被合成器丢掉了 ✗（点击随之失效 ✗）。
          所以：canvas 彻底移出 DOM（由 JS 创建、永不挂载 → 像素纯 CPU 计算 ✓），
          可见角色由下面两层 DOM 背景图渲染（与气泡皮肤同一条路径 ✓），
-         而坐标与拖拽交给这个和画布同尺寸的占位盒 #pet-hit ✓。 */
+         而坐标与拖拽交给和画布同尺寸的占位盒 #pet-hit ✓。 */
       .pet-layer {
-        position: absolute; left: 0; top: 0;
+        position: absolute; left: 50%; top: auto;
+        /* 和 #pet-hit **完全同一尺寸、同一底边**：精灵格铺满这一层，
+           格子的底边（角色脚底再往下 4% 的素材留白）就贴着 --pet-bottom。
+           这样遮罩坐标 == 可见坐标，气泡也不参与她的位置计算。 */
+        bottom: var(--pet-bottom);
+        width: var(--pet-size); height: var(--pet-canvas-h);
+        margin-left: calc(var(--pet-size) / -2);
         background-repeat: no-repeat;
         transform-origin: 50% 100%;
         pointer-events: none;
@@ -118,10 +166,13 @@
         /* 刻意不用 will-change / translateZ：那会把图层提升到 GPU，
            正是这次要绕开的东西 */
       }
-      #bubble-list { position: relative; z-index: 1; }
       /* 只有台词的点击气泡没有正文，别留一行空白 */
       .bubble .text:empty { display: none; }
-      #collapsed-count { font-size: 11px; color: #9aa1ac; margin-top: 2px; }
+      /* 折叠计数：挂在角色脚下（窗口底边），绝对定位，不参与任何高度计算 */
+      #collapsed-count {
+        position: absolute; left: 0; right: 0; bottom: 0;
+        text-align: center; font-size: 11px; color: #9aa1ac; z-index: 2;
+      }
       #hud {
         position: fixed; left: 6px; top: 6px; font: 11px/1.5 ui-monospace, Consolas, monospace;
         color: #dfe3e8; background: rgba(0, 0, 0, .55); padding: 4px 7px; border-radius: 6px;

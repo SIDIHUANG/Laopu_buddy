@@ -23,6 +23,7 @@ import { Lines } from './lines.js';
 import { formatUsageFact } from './usage-view.js';
 import {
   loadAppearance, saveAppearance, clampAppearance, windowSizeFor,
+  CONTENT_SCALE, MARGIN, BUBBLE_SPACE, screenWorkArea, maxSizeForScreen,
 } from './appearance.js';
 
 // 全局错误必须进 native 日志：前端一崩，桌面窗口就是"什么都没有"，
@@ -85,6 +86,7 @@ async function boot() {
   // 可见盒与拖拽交给同尺寸的 #pet-hit。
   const canvas = document.createElement('canvas');
   const hit = document.getElementById('pet-hit');
+  const stage = document.getElementById('stage');
   const renderer = new PetRenderer(canvas, lib, {
     size: 200,
     // 可见角色由这两层 DOM 渲染（canvas 只留着算命中遮罩）
@@ -94,6 +96,8 @@ async function boot() {
     },
     // 可见占位盒：坐标、尺寸、拖拽都靠它（canvas 已移出 DOM）
     hit,
+    // 尺寸写进 #stage 的 CSS 变量，元素位置全由 CSS 决定
+    stage,
   });
 
   const list = document.getElementById('bubble-list');
@@ -125,6 +129,16 @@ async function boot() {
     const tailX = skin.border.left + tailInMid * rendMid; // 尾巴相对气泡左缘
     return bubbleWidth / 2 - tailX + BUBBLE_TUNE.shiftRightPx;
   }
+
+  /**
+   * 气泡尾巴往头顶里压多少 —— 按角色高度取比例，不写死像素。
+   *
+   * ⚠️ 必须声明在所有使用它的函数**之前**：boot 一开头就会调用
+   * applyBubbleOverlap()，而 `const` 在声明行之前是不可访问的（TDZ）。
+   * v1 已经因为同类问题踩过一次（appearance/lines 都是这个坑），
+   * 这次启动日志里 `BOOT-FAILED ... before initialization` 又抓到一次。
+   */
+  const BUBBLE_HEAD_OVERLAP = 0.08;
 
   let lastLayoutLog = 0;
   /** 把关键几何打给 native 日志：气泡底边应低于画布顶边（尾巴压住角色），尾巴应落在画布中线附近 */
@@ -165,6 +179,60 @@ async function boot() {
     logLayout(container);
   }
 
+  /**
+   * 几何自检：把「角色到底有没有被窗口/屏幕裁掉」写成一行日志。
+   *
+   * 为什么必须有：v1 的所有画面问题（她只剩半截 / 整个不见 / 气泡跑到她后面）
+   * 都是**布局几何错了**，而当时的日志只打了 `boot ok` 与 `hitmask filled`，
+   * 这两个数都正常 —— 于是只能靠用户截图，来回好几轮。
+   * 这一行里 `裁掉=` 与 `出屏=` 一旦不为 0，就是确定性的故障，不用再猜。
+   */
+  let lastGeomLog = 0;
+  function logGeometry(why) {
+    const now = Date.now();
+    if (now - lastGeomLog < 1500 && why !== 'boot' && why !== 'size') return;
+    lastGeomLog = now;
+    try {
+      const c = hit.getBoundingClientRect();
+      const b = list.querySelector('.bubble')?.getBoundingClientRect();
+      const s = (stage || document.getElementById('stage')).getBoundingClientRect();
+      const winW = window.innerWidth;
+      const winH = window.innerHeight;
+      // 角色在窗口坐标系里的位置（相对 stage，也就是相对窗口）
+      const top = c.top - s.top;
+      const bottom = c.bottom - s.top;
+      const clippedTop = Math.max(0, Math.round(-top));
+      const clippedBottom = Math.max(0, Math.round(bottom - winH));
+      // 窗口在屏幕上的位置（CSS px）：窗口底部露在可用区域外的像素
+      const avail = screenWorkArea();
+      const offscreen = Math.max(0, Math.round(
+        Math.max(0, -window.screenX) + Math.max(0, window.screenX + winW - avail.w)
+        + Math.max(0, -window.screenY) + Math.max(0, window.screenY + winH - avail.h),
+      ));
+      const ok = clippedTop + clippedBottom === 0;
+      // 气泡必须完全落在窗口内：v1.1 第一版把气泡底算成了「角色格子顶」，
+      // 于是气泡被放到窗口上方（bubble.y 是负的），用户根本看不到气泡。
+      // 这条日志让这种错误再也藏不住。
+      const bubbleTop = b ? Math.round(b.top - s.top) : null;
+      const bubbleClipped = b ? Math.max(0, Math.round(-(b.top - s.top))) : 0;
+      frontLog(`[geom:${why}] ${ok && bubbleClipped === 0 ? 'OK' : 'CLIPPED'} win=${winW}x${winH} `
+        + `dpr=${window.devicePixelRatio || 1} screen=${avail.w}x${avail.h} `
+        + `pos=(${window.screenX},${window.screenY}) size=${renderer.size} `
+        + `pet=(${Math.round(c.left)},${Math.round(top)},`
+        + `${Math.round(c.width)},${Math.round(c.height)}) `
+        + `petBottom=${winH - bottom}px 裁掉=${clippedTop + clippedBottom}px 出屏=${offscreen}px `
+        + (b
+          ? `bubble=(左${Math.round(b.left)} 上${bubbleTop} ${Math.round(b.width)}x${Math.round(b.height)}) `
+            + `尾巴压住头顶=${Math.round(b.bottom - c.top)}px 气泡出框=${bubbleClipped}px`
+          : 'bubble=none')
+        // 角色被裁 = 窗口太小或位置不对，这条日志直接指出是哪一个
+        + (ok ? '' : ` ← 角色被窗口裁掉（需要至少 ${Math.ceil(Math.abs(top) + bottom)}px）`)
+        + (bubbleClipped ? ' ← 气泡跑到窗口外面了（气泡位置算错）' : ''));
+    } catch (e) {
+      frontLog(`[geom:${why}] 自检失败 ${e && e.message}`);
+    }
+  }
+
   function renderBubbles() {
     const merged = bubbles.summary();
     // 显示位只有一条：两条挤在一起不好看，也看不清台词
@@ -196,6 +264,7 @@ async function boot() {
     const counter = document.getElementById('collapsed-count');
     counter.textContent = hiddenCount ? `+${hiddenCount} 条` : '';
     alignTails(list);
+    logGeometry('bubble');
     pointer?.invalidate(); // 气泡是可点区域，布局变了要重算命中遮罩
   }
 
@@ -210,11 +279,13 @@ async function boot() {
       const prev = lastLoggedAnim;
       // 记上一状态的停留时长：判断"working 到底有没有到、到了多久"全靠它。
       // 只看"切到了 working"是不够的——一闪而过等于用户根本没看见。
-      const now = Date.now();
-      const held = lastStateAt ? `${((now - lastStateAt) / 1000).toFixed(1)}s` : '-';
+      // v1 这里算成了 0.0s（上一状态的时间戳每次 resolve 都被覆盖），等于没信息；
+      // 现在用仲裁器给的 heldMs（它以"提交时刻"为准，不受抖动影响）。
+      const held = lastStateAt ? `${((Date.now() - lastStateAt) / 1000).toFixed(1)}s` : '-';
+      const heldReal = typeof snap.heldMs === 'number' ? `${(snap.heldMs / 1000).toFixed(1)}s` : '-';
       lastLoggedAnim = snap.anim;
-      lastStateAt = now;
-      frontLog(`state → ${snap.anim}（上一状态 ${prev ?? '-'} 持续 ${held}）`
+      lastStateAt = Date.now();
+      frontLog(`state → ${snap.anim}（上一状态 ${prev ?? '-'} 持续 ${held}/${heldReal}）`
         + `（等${snap.waiting} 错${snap.errors} 干活${snap.working} 想${snap.thinking}）`
         + (snap.errors.length
           ? ` 出错agent=${snap.errors.map((x) => x.agent).join(',')}` : ''));
@@ -275,6 +346,8 @@ async function boot() {
     bridge: bridgeUrl,
     onLog: (m) => frontLog(`settings ${m}`),
     lines,
+    // 角色大小上限跟着屏幕走：窗口装得下才算合法（见 appearance.js 的说明）
+    maxSize: maxSizeForScreen(),
     onProviderChanged: () => pushLine('provider', BUBBLE.INFO, '', 'presage'),
     usageBroadcast: { get: () => usageBroadcastEnabled, set: setUsageBroadcast },
     appearance: { get: () => appearance, set: (patch) => applyAppearance(patch) },
@@ -411,6 +484,9 @@ async function boot() {
   const geo0 = applyBubbleOverlap();
   frontLog(`bubble overlap=${geo0.overlap}px（画布 ${geo0.canvasSize}x${geo0.canvasH}）`);
   await applyAppearance({}, { announce: true });
+  logGeometry('boot');
+  // 屏幕缩放/分辨率变化时几何会变：重新夹一次尺寸并自检
+  window.addEventListener('resize', () => { setTimeout(() => logGeometry('resize'), 300); });
   // 贴边检测：窗口一动就查一次，另加低频兜底（比如被系统移了位置）
   tauriWindow()?.onMoved?.(() => { checkEdgePeek(); });
   setInterval(() => { checkEdgePeek(); }, 1500);
@@ -529,20 +605,33 @@ async function boot() {
   // ---------- 外观设置：大小 / 透明度 / 置顶 / 穿透 ----------
   // （appearance 变量在 boot 开头声明，这里只放应用逻辑）
 
-  /** 气泡叠放位置随画布尺寸变，所以抽成函数，改尺寸后要重算 */
+  /**
+   * 气泡的纵向位置。
+   *
+   * v1 用的是 `#bubble-list { margin-bottom: -Npx }`（N 由 boot 时刻量到的画布尺寸算出），
+   * 这条负 margin **会把角色整体往下拉**：气泡里的内容一变高、或者 N 算大了，
+   * 她就被拉出窗口底边，被窗口硬裁掉（实测：窗口底边切在胸口）。
+   * 现在改成绝对定位：气泡从窗口底边往上量到「头顶 + 一点重叠」，
+   * 角色不再参与气泡的布局，气泡也不再影响角色的位置。
+   */
   function applyBubbleOverlap() {
-    const canvasSize = hit.clientWidth;
-    const canvasH = hit.clientHeight;
-    const heights = Object.values(manifest.states)
-      .map((s) => (s.on_screen_px ? s.on_screen_px[1] : 0));
-    const maxContentH = Math.max(...heights, 1);
-    const contentInCanvas = (maxContentH / lib.cell) * canvasSize;
-    const bottomPad = 0.04 * canvasSize;
-    const headTop = canvasH - bottomPad - contentInCanvas;
-    const overlap = Math.round(headTop + BUBBLE_TUNE.extraOverlapPx);
-    const list = document.getElementById('bubble-list');
-    if (list) list.style.marginBottom = `${-overlap}px`;
-    return { canvasSize, canvasH, overlap };
+    const size = renderer.size;
+    const canvasH = renderer.height;
+    // 角色脚底离窗口底边的距离 = 精灵格底部那段素材留白（margin），
+    // 因为 CSS 里 --pet-bottom = size * MARGIN（见 index.html）。
+    const feetGap = size * MARGIN;
+    // 角色最高像素离窗口底边多远。CONTENT_SCALE 覆盖了所有状态里最高的一帧。
+    const charTopFromBottom = feetGap + size * CONTENT_SCALE;
+    const overlap = Math.round(size * BUBBLE_HEAD_OVERLAP);
+    const bubbleBottom = Math.max(
+      feetGap + Math.round(size * 0.4), // 兜底下限：气泡至少要离开脚底一段
+      Math.round(charTopFromBottom - overlap),
+    );
+    const stage = document.getElementById('stage');
+    if (stage) {
+      stage.style.setProperty('--bubble-bottom', `${bubbleBottom}px`);
+    }
+    return { canvasSize: size, canvasH, overlap, bubbleBottom, feetGap };
   }
 
   async function applyAppearance(patch = {}, { announce = false } = {}) {
@@ -585,10 +674,11 @@ async function boot() {
 
     const geo = applyBubbleOverlap();
     pointer?.invalidate();
+    logGeometry('size');
     if (announce) {
       frontLog(`外观 size=${appearance.size} opacity=${appearance.opacity} `
         + `置顶=${appearance.alwaysOnTop} 穿透=${appearance.clickThrough} `
-        + `画布=${geo.canvasSize}x${geo.canvasH}`);
+        + `画布=${geo.canvasSize}x${geo.canvasH} 气泡底=${geo.bubbleBottom}px`);
     }
     return appearance;
   }
@@ -918,6 +1008,23 @@ async function boot() {
     arbiter, bubbles, lib, renderer, feed, parseLine, demo, live,
     interactions, playTransient, pointer, selfTest, settings,
     broadcastUsage, setUsageBroadcast, openSettingsView,
+    /**
+     * native 侧让页面显示一条**常驻提示**（目前只有"托盘被系统拒绝"用）。
+     *
+     * 为什么需要：托盘图标是 v1 里唯一的可靠入口，而它在这台机器上被
+     * ACCESS_DENIED 拒掉。托盘没了，用户就只剩"右键角色"这一条路，
+     * 但他并不知道 —— 所以要有人主动告诉他，而不是让他去找一个不存在的小图标。
+     */
+    notice: (text) => {
+      if (!text) return false;
+      frontLog(`notice ${text}`);
+      // WAITING 类的 expiresAt 是 null（不自动过期），ref 保证只留一条。
+      bubbles.push({
+        kind: BUBBLE.WAITING, title: '托盘不可用', text: String(text),
+        agent: 'presage', ref: 'tray-unavailable',
+      });
+      return true;
+    },
     // 供设置窗口通过 Rust 转发调用：应用一份外观到**桌宠窗口自己**
     applyAppearanceFromSettings: (json) => {
       let patch = {};

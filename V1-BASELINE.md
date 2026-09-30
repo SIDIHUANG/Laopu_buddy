@@ -1,4 +1,47 @@
-# 普瑞塞斯桌宠 · v1 基线
+# 普瑞塞斯桌宠 · v1.1 基线
+
+> **v1.1 做了什么、还剩什么，看 [OPEN-ISSUES.md](OPEN-ISSUES.md)（第 0 节是本次修掉的全部问题）。**
+> 本文档第 0 节下面是 **v1 的历史记录**，其中的"未解决问题"结论**已被 v1.1 更新**，
+> 读的时候以 OPEN-ISSUES.md 为准。
+
+## v1.1 摘要（一句话版）
+
+**v1 的"角色几秒后只剩半截 / 整个消失"不是渲染或合成问题，而是布局几何从第一帧就错了：
+窗口高度按「精灵格高度（宽 × 1.34）」算，而角色真实只有「宽 × 0.875」，
+于是她的下半身一直在窗口外，被窗口裁掉；气泡又通过负 margin 拉着她一起动，
+所以"被裁掉的是哪一半"还会变。**
+
+修法（全部实测验证过）：
+
+| # | 改动 | 文件 |
+|---|---|---|
+| 1 | 窗口高 = 角色实际占高 + 气泡区；尺寸上限跟屏幕走 | `app/src/appearance.js` |
+| 2 | 画布 / 命中盒 / 精灵格三者同尺寸（`HEADROOM = 0`），遮罩坐标 == 可见坐标 | `app/src/renderer.js` |
+| 3 | 角色 `bottom` 锚窗口底边、气泡 `bottom` 锚"头顶 + 8%"；删掉覆盖 `position` 的重复规则 | `app/index.html` |
+| 4 | 状态抖动：防抖记账只在候选变化时写时间戳 + 一次性动画按优先级抢占 | `app/src/arbiter.js` |
+| 5 | 启动器重写：唯一实现、`start /b` 直启（无 powershell 中间层）、profile 坏了自动重建 | `启动桌宠.bat` |
+| 6 | 几何自检日志（`[geom:*] 裁掉=/出屏=/气泡出框=`）+ 提权自检 + 托盘不可用的热键退路 | `app/src/main.js` / `app/src-tauri/src/main.rs` |
+| 7 | 排障工具：`measure_sprites.py`（量真实包围盒）/ `see_pet.py`（抓屏幕像素）/ `set_size.mjs` | `tools/` |
+
+**验收命令**（三档尺寸都不许被裁 + 肉眼看整只都在）：
+
+```powershell
+$env:PYTHONIOENCODING = "utf-8"; python tools\build_web.py
+cd app\src-tauri; cargo build --release; cd ..\..
+Copy-Item app\src-tauri\target\release\presage-pet.exe v1\ -Force
+Copy-Item app\src-tauri\target\release\WebView2Loader.dll v1\ -Force
+# （在 DSH 沙箱里跑：profile 必须放工作区内，见 OPEN-ISSUES 第 3 节）
+$env:WEBVIEW2_USER_DATA_FOLDER = "$PWD\runtime\wv2-geom"
+$env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = "--remote-debugging-port=9333 --remote-allow-origins=*"
+Start-Process "$PWD\v1\presage-pet.exe" -WorkingDirectory "$PWD\v1" `
+  -RedirectStandardOutput "$PWD\runtime\sz.out.log" -RedirectStandardError "$PWD\runtime\sz.err.log"
+node tools\set_size.mjs 200; node tools\set_size.mjs 320; node tools\set_size.mjs 480
+python tools\see_pet.py --out runtime\shot.png
+```
+
+---
+
+<!-- ↓↓↓ 以下为 v1 时期的历史记录，保留以便追溯（结论以 OPEN-ISSUES.md 为准） ↓↓↓ -->
 
 ## 📌 下次开工指引（新对话第一件事就看这里）
 

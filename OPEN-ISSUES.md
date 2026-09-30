@@ -1,159 +1,215 @@
-# 未解决问题汇总（交接给下一个对话）
+# 未解决问题汇总 · v1.1
 
-> 生成时间：2026-10-01 深夜 · 对应提交 `f08c898`（以及本文档的后续提交）
-> 项目：`C:\Users\Asus\Desktop\dsh_test\laopu_ds`
+> 更新于 v1.1（`V1-BASELINE.md` 同版本）· 项目：`C:\Users\Asus\Desktop\dsh_test\laopu_ds`
 > **新对话第一句建议直接粘**：
-> 「读 `OPEN-ISSUES.md` 和 `V1-BASELINE.md`。目标：解决 OPEN-ISSUES 里的问题 1（角色几秒后消失+红色故障条）。」
+> 「读 `V1-BASELINE.md` 和 `OPEN-ISSUES.md`。先看 v1.1 修了什么（第 0 节），
+> 再看还剩下什么（第 1 节起）。」
 
 ---
 
-## 🔴 问题 1（阻塞级）：角色启动几秒后消失，伴随「红色故障条」
+## 0. ✅ v1.1 修掉的问题（v1 记录的问题 1/2 已定性并解决）
 
-### 用户实测的完整时间线（这是最可靠的资料）
+### 0.1 根因：**角色被窗口硬裁掉**（v1 记录里那个"几秒后只剩半截/整个消失"）
 
-| 时间 | 现象 |
-|---|---|
-| 0~10 秒 | **一切正常** ✓：角色显示正确、**可以正常拖动** ✓、气泡正常带动画 ✓ |
-| ~10 秒后 | 上方出现**红色故障条** ✗（用户原话），角色**只剩半截**（上半或下半） ✗ |
-| 再之后 | 角色**完全消失** ✗，只剩气泡文字与 `+n 条` 计数 ✓ |
+**现象（v1）**：前 10 秒正常、能拖能点，随后"红色故障条 + 只剩半截"，再之后"完全消失，
+只剩气泡文字与 `+n 条`"。
 
-**关键推论**：这是**延迟发生**的 ✗（前 10 秒完全正常 ✓）→ 不是"画不出来"✗，
-而是**几秒后合成/绘制路径坏掉** ✓。
+**v1.1 的实测结论**：这不是"延迟发生的合成失败"，而是**布局几何从第一帧就错了**，
+只是错的位置随时间变化（气泡出现/消失、状态切换都会改变她相对窗口的位置）：
 
-### 已排除的假设（都做过实验，别再走一遍）
+```
+旧公式（appearance.js）：画布高 = 宽度 × 1.34 = 268px，窗口高 = 画布高 + 202 = 470px
+真实素材（tools/measure_sprites.py 量 12 条精灵图）：
+    非透明像素高度 ÷ 格子 = 0.875（working/thinking/error/peek_*）
+                            0.969（celebrate 弹跳那一帧）
+    → 200 宽的角色实际只有 ~175px 高，而代码按 268px 给它留位置
+```
 
-| 假设 | 实验 | 结果 |
+于是 `#pet-hit` / `.pet-layer` 的底边被算到窗口底边**以下**，角色下半身直接落在窗口外，
+被窗口（不是合成器！）裁掉。窗口尺寸、气泡位置、命中遮罩三者又互相耦合，
+所以"哪一半被裁掉"会随气泡与状态变化 —— 用户看到的就是"半截 → 消失"。
+
+**v1.1 的解法**（结构性，不靠调参）：
+
+| 改动 | 文件 | 为什么 |
 |---|---|---|
-| 提权运行 | 用户去掉管理员，普通双击 | 现象**完全相同** → 排除 ✗ |
-| canvas 图层不被合成 | 把可见角色改成 **DOM/CSS 背景图**（与气泡同路径） | **仍然几秒后消失** → 排除 ✗ |
-| `--disable-gpu` | 写进 `tauri.conf.json` 的 `additionalBrowserArgs` 并重新构建 | **仍然复现** → 无效 ✗（且未验证该 flag 是否真被 WebView2 采用 ✗） |
-| 启动方式差异（bat vs agent） | bat 已改成与 agent **完全相同的 `Start-Process` 命令** | 仍在验证中（用新版 bat 测一次即可确认） |
+| 窗口高 = 角色实际占高（`size × 0.98`）+ 气泡区（116） | `app/src/appearance.js` | 不再用精灵格高度，窗口刚好装得下她 + 气泡 |
+| 画布 / 命中盒 / 精灵格 **三者同尺寸**（`size × size`） | `app/src/renderer.js`（`HEADROOM = 0`） | "遮罩坐标 == 眼睛看到的坐标"结构性成立 |
+| 角色用 `bottom` 锚在窗口底边，气泡用 `bottom` 锚在"头顶 + 8% 重叠" | `app/index.html` | 气泡不再通过负 margin 拉动角色（v1 的 `margin-bottom: -Npx` 会把她拉出窗口） |
+| 删掉 `#bubble-list { position: relative }` 这条重复规则 | `app/index.html` | 它把上面的 `position: absolute` 覆盖掉了，`bottom` 直接失效 —— 气泡被放到窗口**上方**（实测 `bubble.y = -226`） |
+| 尺寸上限跟屏幕走（`maxSizeForScreen()`），设置页滑块同步 | `app/src/appearance.js` / `settings.js` | v1 允许调到 480，窗口高 845px > 可用高度，脚永远在屏幕外 |
 
-### 🎯 现在的首要怀疑：**交叉淡化（两层 opacity 混合）**
-
-理由：**canvas 版与 DOM 版都复现** ✗，而两者唯一的共同点是
-**状态切换时会做 180ms 的交叉淡化**（把一个旧图层以 opacity 淡出、新图层淡入）✓
-—— 而且**前 10 秒正常**，正好对应"第一次状态切换发生之前" ✓。
-
-**最便宜的验证（强烈建议先做这个）**：
-**把交叉淡化整个去掉** ✓（状态切换直接硬切 ✓），重建后看故障是否消失 ✓。
-
-相关代码（都在 `app/src/renderer.js`）：
-- `FADE_MS = 180` 与 `this.fade` 的推进
-- `snapshotPrevious()` / `snapshotPreviousDom()`（旧画面快照）
-- canvas 版的 `if (this.fade < 1) { ctx.globalAlpha = 1 - fade; ctx.drawImage(this.prev, ...) }`
-- DOM 版的 `cur.style.opacity = fade * op` / `prev.style.opacity = (1 - fade) * op`
-
-### 其他次要但合理的怀疑
-
-1. **WebView2 的 GPU 进程在几秒后崩溃** ✗ →
-   查 `msedgewebview2.exe` 里是否还活着 `--type=gpu-process` ✓；
-   真正关掉硬件加速（不是靠 env var ✗）✓；再不行关掉 Windows 的
-   「硬件加速 GPU 计划」（设置 → 系统 → 屏幕 → 显示卡 → 默认图形设置）✓；
-   更新显卡驱动 ✓。用户机器是**混合显卡（NVIDIA + 集显）+ 200% 缩放** ✓。
-2. **红色故障条**：只在角色故障时出现 ✓，怀疑是 **DWM/合成器**重绘失败的残留 ✓
-   （它是**系统级**现象 ✓，不是我们窗口的画错 ✓）。
-
-### 排查纪律（这轮踩过的坑）
-
-- **不要再基于推测写"结论"** ✓ —— 本轮有两次（提权 ✗、GPU flag ✗）都是被用户实测推翻的 ✓。
-- **验证必须看得见** ✓：日志说 `boot ok` / `hitmask filled` 非 0 都**不能**证明"画面正常" ✗。
-- 用户机器上的画面问题，**只能靠用户肉眼或截图确认** ✓。
-
----
-
-## 🔴 问题 2：托盘图标不出现（`Shell_NotifyIcon` 返回 ACCESS_DENIED）
-
-```
-[tray] 用 exe 图标资源 id=32512 ✓ 句柄有效 ✓
-[tray] diag windowstation=WinSta0 desktop=Default ✓（与 Explorer 一致）
-[tray] diag NIM_ADD without-icon ok=0 err=5      ← 连不带图标的最小注册也被拒
-[tray] Shell_NotifyIcon 五次都失败，GetLastError=5
+**验证方式（可复现）**：
+```powershell
+# 三档尺寸都不许被裁：clipped 必须为 0
+$env:WEBVIEW2_USER_DATA_FOLDER = "$PWD\runtime\wv2-geom"   # 必须在工作区内，见第 3 节
+$env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = "--remote-debugging-port=9333 --remote-allow-origins=* --disable-gpu"
+Start-Process -FilePath "$PWD\v1\presage-pet.exe" -WorkingDirectory "$PWD\v1" `
+  -RedirectStandardOutput "$PWD\runtime\sz.out.log" -RedirectStandardError "$PWD\runtime\sz.err.log"
+node tools\set_size.mjs 200   # {"clipped":0,"bubbleTop":32}
+node tools\set_size.mjs 320   # {"clipped":0,"bubbleTop":38}
+node tools\set_size.mjs 480   # {"clipped":0,"bubbleTop":42}
+python tools\see_pet.py --out runtime\shot.png   # 肉眼看整只都在
 ```
 
-已排除：图标句柄无效 ✗、图标尺寸（512/128/32 都试过）✗、结构体尺寸 `cbSize=976` ✗、
-残留错误码（已 `SetLastError(0)`）✗、窗口站/桌面 ✗、Tauri 封装 ✗（换原生实现同样失败）、
-提权 ✗（普通双击同样 err=5）。
+### 0.2 新增：**几何自检日志**（这类问题不再需要截图猜）
 
-**下一步**：
-1. 写一个 **30 行独立最小 exe**（只调 `Shell_NotifyIcon`）在同一台机器跑 ✓ ——
-   若它也 err=5 ✓，即可确认是**环境级**问题并停止在本项目里找原因 ✓
-2. 查安全软件 / 组策略（用户配置 → 管理模板 → 开始菜单和任务栏）✓
-3. 换一个 Windows 本地账户试同一 exe ✓
-4. 兜底：托盘不可用时，**桌宠右键菜单**是唯一入口（已可用 ✓），
-   可考虑做桌面快捷方式并在文档里说明 ✓
+`app/src/main.js` 的 `logGeometry()` 每次启动 / 改尺寸 / 气泡变化都会打一行：
+
+```
+[front] [geom:boot] OK win=380x351 dpr=2 screen=1280x752 pos=(125,51) size=240
+        pet=(70,104,240,240) petBottom=9.59px 裁掉=0px 出屏=0px
+        bubble=(左115 上61 186x64) 尾巴压住头顶=106px 气泡出框=0px
+```
+
+`裁掉=0` / `出屏=0` / `气泡出框=0` 三个数任何非 0，就是确定性的几何故障，
+并且这一行会直接指出是"角色被窗口裁"还是"气泡跑到窗口外"。
+
+### 0.3 状态抖动（同一秒内 `idle→thinking→celebrate→idle`）
+
+**v1 症状**：日志里满屏 `state → working（上一状态 thinking 持续 0.0s）`，
+画面上她不停抽搐；`working` 是 `once_loop`（先"拿出电脑"再打字），
+每次重进都从头播 → 用户**永远看不到打字那一段**。
+
+**两个真 bug**（都在 `app/src/arbiter.js`）：
+
+1. **防抖记账每次都被刷新**：`resolve()` 每 200ms 被调一次（tick + 每次事件），
+   原实现在里面写 `_pendingSince = now`，于是 `now - _pendingSince` 永远是 0，
+   2.2s 的窗口**永远满足不了**，状态反而每次都被放行。
+2. **一次性动画可以随意被抢**：`celebrate`（1.4s 素材动画）会被下一轮的
+   `idle` 立刻打断 —— `TURN_END` 与下一个 `TURN_START` 常常只差几十毫秒。
+
+**解法**：
+* 记账只在"候选动画变化"时写时间戳；
+* 新增 `ANIM_PRIORITY`：`celebrate(30)` 挡得住 `idle(5)`，挡不住
+  `thinking(55)/working(65)`（所以"新工作开始时该演什么"这条老规则仍然成立）；
+* `CELEBRATE_MS` 由 3000 改成 **1400**，与素材 16 帧 @12fps = 1.33s 对齐
+  （以前跳完了还要愣在那里 1.7 秒）；
+* 日志里那个恒为 `0.0s` 的"上一状态持续"改成仲裁器给的 `heldMs`
+  （日志现在是 `持续 0.8s/0.8s`）。
+
+**测试**：`app/test/logic.test.mjs` 新增 3 条（47 项全绿），其中
+「事件把状态反复打断时，动画必须稳定在一个值上」就是照着用户日志复现的。
+
+### 0.4 启动器重写（"测试里能启动、双击 bat 就失败"）
+
+v1 的启动器有两个结构性毛病：
+
+| 问题 | v1 现象 | v1.1 做法 |
+|---|---|---|
+| 用 `powershell -Command Start-Process ... -RedirectStandardOutput` 启动 | 进程树多一层 `powershell.exe`；双击时控制台一闪、桌宠跟着抖动 | 直接 `start "" /b /d "..." exe`：进程树里只有桌宠，和手动双击 exe 完全一致 |
+| 两份启动逻辑（根目录 / `v1\`）各自修 | "v1\ 里修好了、根目录那份还是旧的"，两个入口现象不同 | **只有一份实现**（根目录 `启动桌宠.bat`），`v1\启动桌宠.bat` 只做转发 |
+| WebView2 profile 被反复强杀写坏 | profile 一坏，之后每次启动都是 `0x8000FFFF 灾难性故障`，日志空白 | profile 固定为 `runtime\webview2`；看到 `.boot-failed` 标记或"12 秒后进程不在"就**自动删掉重建并重试一次** |
+| 环境依赖 | 只认 DSH 自带的 node、依赖工作目录 | node 回落到 PATH；`start /d` 显式给工作目录；缺 `WebView2Loader.dll` 直接提示（否则双击 exe 静默秒退 `0xC0000135`） |
+
+另外补了两条兜底（`app/src-tauri/src/main.rs`）：
+* **提权自检**：日志里 `[env] 提权=否`（`OpenProcessToken` + `GetTokenInformation`，
+  不再靠"是不是右键管理员运行"猜）；
+* **托盘不可用时的退路**：日志 `[hotkey] Ctrl+Alt+Q 退出=ok Ctrl+Alt+S 设置=ok`，
+  并让前端弹一条常驻提示气泡（"右键我 → 设置/退出；或按 Ctrl+Alt+S / Ctrl+Alt+Q"）。
 
 ---
 
-## 🟡 问题 3：抠图残留（手臂与身体之间的浅灰缝）
+## 1. 🟡 仍未解决（v1.1 保持现状）
 
-**现象**：某些帧角色两侧有未扣净的浅灰竖条，**逐帧闪烁** ✗。
-**根因**：那是"被角色围住的白色背景"，flood fill 从画布边界到不了 ✓。
-**为什么没硬修**：试过两种自动判据都不可靠 ✗（按连通块中位亮度 → 白嘴与缝连成一块时把嘴一起抠掉 ✗；
-按逐像素亮度 → 领结/高光抗锯齿边缘被咬出麻点 ✗）。根因是视频压缩后
-背景浅灰(≈244)与白色特征(≈251)像素分布**重叠** ✓。
+### 1.1 托盘图标不出现（`Shell_NotifyIcon` → `ACCESS_DENIED`）
 
-**代码位置**：`tools/build_sprites.py:225` `key_white()`（含完整决策注释与回退点 `:262-276`）
-**正解**：**从源素材解决** ✓ —— 导出带 alpha 的 webm/png 序列，或用纯色幕布（如纯绿 #00FF00）。
-这样抠图零误差，灰条/边界毛边/探头裁切会一起消失 ✓。
+**现状**：这台机器上仍然 `err=5`（`NIM_ADD` 连不带图标的最小注册也被拒）。
+**但 v1 的"环境级"结论要更新**：在**用户自己的会话**里，同一份代码是**注册成功**的 ——
+`%LOCALAPPDATA%\PresagePet\pet.log` 里有：
 
----
+```
+[tray] diag NIM_ADD without-icon ok=1 err=0
+[tray] Shell_NotifyIcon 注册成功（第 1 次尝试）
+```
 
-## 🟡 问题 4：任务栏图标（`skipTaskbar` 无效）
+也就是说 `err=5` 只出现在"ASUS 上由受限/非交互会话启动"的那一路，
+**不是用户环境的问题**。剩下要做的只有一件事：让用户在**自己的会话**里跑一次
+新版启动器，然后看日志里那两行是 `ok=1` 还是 `err=5`。
 
-窗口仍出现在任务栏。代码：`app/src-tauri/src/main.rs:806` `let _ = w.set_skip_taskbar(true);`
+**下一步（按性价比）**：
+1. 用户双击 `启动桌宠.bat`，把自检段 `[2] 托盘注册结果` 发出来；
+2. 若仍是 `err=5`：查安全软件 / `gpedit.msc → 用户配置 → 管理模板 → 开始菜单和任务栏`、
+   `HKCU\Control Panel\NotifyIconSettings`；
+3. 兜底**已经就位**：托盘不可用时右键菜单 + `Ctrl+Alt+S/Q` 都能用，
+   并在气泡里明确告诉用户。
+
+### 1.2 抠图残留（手臂与身体之间的浅灰缝）
+
+**现象**：某些帧角色两侧有未扣净的浅灰竖条，逐帧闪烁。
+**根因**（v1 已定性，不变）：那是"被角色围住的白色背景"，flood fill 从画布边界到不了；
+视频压缩后背景浅灰(≈244)与白色特征(≈251)像素分布**重叠**，颜色上分不干净。
+**代码**：`tools/build_sprites.py` 的 `key_white()`（含完整决策注释）。
+**正解**：**从源素材解决** —— 导出带 alpha 的 webm/png 序列，或用纯色幕布（如纯绿 `#00FF00`）。
+
+### 1.3 任务栏图标（`skipTaskbar` 无效）
+
+窗口仍出现在任务栏。代码：`app/src-tauri/src/main.rs` 里 `w.set_skip_taskbar(true)`。
 **下一步**：直接设扩展样式 `WS_EX_TOOLWINDOW`（清 `WS_EX_APPWINDOW`）。
-链接期警告 `.rsrc merge failure: multiple non-default manifests` 与此无关，不影响运行 ✓。
+链接期警告 `.rsrc merge failure: multiple non-default manifests` 与此无关。
+
+### 1.4 `celebrate` 用难过脸弹跳
+
+需要一张笑脸立绘。文件名带 `happy` / `开心` / `笑` / `smile` 会被管线自动识别。
 
 ---
 
-## 🟢 问题 5：`celebrate` 用难过脸弹跳
+## 2. v1.1 新增的工具（排障用，别删）
 
-需要一张笑脸立绘。文件名带 `happy` / `开心` / `笑` / `smile` 就会被管线自动识别 ✓。
+| 工具 | 用途 |
+|---|---|
+| `tools/measure_sprites.py` | 量每条精灵图真实的非透明包围盒 → 布局参数的**唯一依据**（`h/cell`、`bottom_gap`） |
+| `tools/see_pet.py` | 抓**屏幕**（DWM 合成结果）里桌宠窗口的像素，并给出逐段占比 —— 肉眼看"她到底在不在" |
+| `tools/set_size.mjs` | 通过 CDP 让运行中的桌宠改尺寸，并回报 `clipped` / `bubbleTop` |
+| `tools/geom_probe.mjs` | CDP 读整页几何（`innerWidth/Height`、`#pet-hit`、`.pet-layer`、`bubble` 的 rect） |
+| `tools/win_watch.ps1` / `win_probe.ps1` | 按"用户的启动方式"（`cmd /c bat`）启动并连续抓图 |
+
+**一条重要区别**（v1 浪费过很多时间的地方）：
+`PrintWindow` 对分层（透明）窗口**不可信** —— 它返回的画面和屏幕上看到的不是一回事。
+判断"她有没有画出来"要用 `tools/see_pet.py`（BitBlt 屏幕）或让用户截图。
 
 ---
 
-## 当前代码状态（本轮改动全在此）
-
-| 提交 | 内容 | 影响 |
-|---|---|---|
-| `f08c898` | canvas 彻底移出 DOM（只供遮罩像素）；`#pet-hit` 占位盒负责坐标与拖拽；透明度作用到 DOM 层；**bat 改抄 agent 的可 work 命令** | 命中遮罩与点击恢复正常 ✓ |
-| `b1d59be` | 可见角色改由 **DOM/CSS 背景图**渲染（`#pet-cur`/`#pet-prev` 两层 `.pet-layer`） | 绕开 canvas 显示路径 ✓ |
-| `1805ee4` | `tauri.conf.json` 加 `additionalBrowserArgs: "--disable-gpu"` | 未解决问题 1 ✗ |
-| 其余 | bat 两个真 bug（`timeout` 在 stdin 重定向下中断 ✗ / UTF-8 日志在 GBK 控制台花屏 ✗）+ 文档 + 基线 | 启动器可用 ✓ |
-
-**⚠️ 本轮引入过并已修的回归**：DOM 层排在 `#bubble-list` 之后且没写 `z-index` ✗ →
-**气泡被压到角色后面** ✗（用户实测）。已修：`.pet-layer { z-index: 0 }` + `#bubble-list { z-index: 1 }` ✓。
-**改动渲染层级时务必确认"气泡尾巴搭在她头顶"仍然成立** ✓。
-
-**关键文件**：
-- `app/index.html` —— 舞台结构（`#bubble-list` / `#pet-hit` / `.pet-layer` ×2）+ 全部 CSS
-- `app/src/renderer.js` —— 绘制（canvas 画像素供遮罩 ✓ + DOM 画可见角色 ✓）、交叉淡化、提拉形变
-- `app/src/pointer.js` —— 命中遮罩（像素来自游离 canvas ✓、坐标与拖拽来自 `#pet-hit` ✓）
-- `app/src/main.js` —— 接线（`canvas` 由 JS 创建不进 DOM ✓、`hit` 传给渲染器与指针桥 ✓）
-- `app/src-tauri/src/main.rs` —— 原生壳（托盘、窗口、穿透样式、`logln` 双写日志 ✓）
-
-## 环境与验证方式（重要）
+## 3. 环境与验证方式（重要）
 
 ```powershell
 # 构建
-python tools\build_web.py                     # 需 $env:PYTHONIOENCODING="utf-8"，否则 GBK 报错 ✗
-cd app\src-tauri; cargo build              # debug 20s；cargo build --release 约 1 分钟
+$env:PYTHONIOENCODING = "utf-8"      # 否则 build_web.py 在 GBK 控制台报错
+python tools\build_web.py            # 前端语法门禁 + 装配 app/dist
+cd app\src-tauri; cargo build --release   # 约 1 分钟（release 必须重跑，前端是编进 exe 的）
 
-# 启动（必须重定向输出，否则命令挂住 ✗）
-$env:WEBVIEW2_USER_DATA_FOLDER = "$pwd\v1\runtime\webview2"
-Start-Process -FilePath "v1\presage-pet.exe" -WorkingDirectory "$pwd\v1" `
-  -RedirectStandardOutput "v1\runtime\pet.out.log" -RedirectStandardError "v1\runtime\pet.err.log"
+# 测试（112 → 115 项，全绿）
+node app\test\logic.test.mjs        # 47
+node app\test\codex.test.mjs        # 19
+node app\test\interactions.test.mjs # 11
+node app\test\dsh.test.mjs          # 13
+node app\test\lines.test.mjs        # 13
+node app\test\usage-view.test.mjs   # 13
 
-# 日志（程序自己写，没有控制台也能查 ✓）
-%LOCALAPPDATA%\PresagePet\pet.log             # ← agent 可直接读，不必让用户截图 ✓
-v1\runtime\pet.out.log                         # 另写一份到 cwd
+# 启动（自己测的时候必须重定向输出，否则命令挂住）
+Start-Process -FilePath "$PWD\v1\presage-pet.exe" -WorkingDirectory "$PWD\v1" `
+  -RedirectStandardOutput "$PWD\runtime\pet.out.log" -RedirectStandardError "$PWD\runtime\pet.err.log"
 
-# 抓窗口截图验证"看得见"的东西（PrintWindow）
+# 日志
+v1\runtime\pet.out.log                # exe 的 stdout（工作目录 = v1）
+%LOCALAPPDATA%\PresagePet\pet.log     # 总是可写的那一份
 ```
 
-**发布包**：`v1\`（`presage-pet.exe` + `WebView2Loader.dll` + `启动桌宠.bat` + `诊断-关GPU启动.bat`）
-—— **`v1\` 不进 git** ✓（44 MB 的 exe 不该进版本库 ✓）。
+### ⚠️ 在 DSH 沙箱里跑桌宠时，WebView2 profile 与 TEMP 相关的坑
 
-**用户环境要点**：Windows · 显示缩放 **200%** · **混合显卡（NVIDIA 独显 + 集显）** ·
-非管理员 · 没有 PowerShell 7（只有 5.1）· MinGW-w64 在 `~/.mingw64/mingw64/bin`。
+DSH 的沙箱**不允许 `msedgewebview2.exe` 子进程在工作区之外创建 profile 目录**。
+在那里失败的样子是 `HRESULT 0x8000FFFF「灾难性故障」` ——
+和"profile 被写坏"**长得一模一样**，极容易误判。实测对照：
+
+| profile 位置 | 沙箱内 |
+|---|---|
+| `<工作区>\runtime\wv2-*` | ✅ 能起 |
+| `<工作区>\v1\runtime\wv2-*` | ✅ 能起 |
+| `%TEMP%\wv2-*` | ❌ 0x8000FFFF |
+| `%LOCALAPPDATA%\PresagePet\wv2-*` | ❌ 0x8000FFFF |
+
+所以：**自己在沙箱里测的时候，`WEBVIEW2_USER_DATA_FOLDER` 必须指到工作区内**。
+用户双击 `启动桌宠.bat` 时用的是 `runtime\webview2`（在工作区内），不受这条限制。
+
+**用户环境要点**：Windows · 显示缩放 **200%** · 混合显卡（NVIDIA + 集显）·
+非管理员 · **没有 PowerShell 7**（只有 5.1）· MinGW-w64 在 `~/.mingw64/mingw64/bin`。

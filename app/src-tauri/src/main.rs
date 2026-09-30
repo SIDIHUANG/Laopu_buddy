@@ -56,6 +56,14 @@ mod native_tray {
     /// 托盘窗口句柄，删除图标时要用
     static TRAY_HWND: OnceLock<isize> = OnceLock::new();
 
+    /// 给外部（热键线程）取 AppHandle。
+    ///
+    /// 为什么不用闭包捕获：热键线程是在 setup 之后才 spawn 的独立线程，
+    /// 用 OnceLock 取比把 AppHandle 拷进闭包更好读，也免得忘了 clone。
+    pub fn app_handle() -> Option<tauri::AppHandle> {
+        APP.get().cloned()
+    }
+
     fn wide(s: &str) -> Vec<u16> {
         s.encode_utf16().chain(std::iter::once(0)).collect()
     }
@@ -185,6 +193,10 @@ mod native_tray {
                 from,
                 !hicon.is_null()
             ));
+            // 提权会让 Shell_NotifyIcon 直接返回 ACCESS_DENIED，而且顺带打掉
+            // WebView2 的合成。v1 文档里把"提权"当成过结论又推翻过一次，
+            // 所以这里不再猜：直接把令牌里的提权状态打出来。
+            crate::logln(format!("[env] {}", crate::elevation_report()));
 
             let tip = wide("普瑞塞斯 · 桌宠");
             let mut nid: NOTIFYICONDATAW = std::mem::zeroed();
@@ -670,8 +682,7 @@ fn runtime_config() -> serde_json::Value {
 ///
 /// stdout 被重定向到文件时是**块缓冲**：不显式 flush 就可能一直看不到输出，
 /// 让人误以为"进程没起来/没出错"（实测踩过）。所有 native 日志都走这里。
-fn logln(msg: impl AsRef<str>) {
-    use std::io::Write;
+fn logln(msg: impl AsRef<str>) {    use std::io::Write;
     let text = msg.as_ref();
     // 注意：GUI 子系统下没有 stdout，`println!` 写失败会 **panic**（实测：
     // 换 windows_subsystem="windows" 后程序启动即死）。所以这里必须用
@@ -778,6 +789,124 @@ fn start_pointer_watch(app: AppHandle, shared: Arc<Shared>) {
     });
 }
 
+/// 当前进程是否以管理员令牌运行。
+///
+/// 为什么要打这条日志：v1 文档里"提权是根因"曾经被当成结论、又被一次实测推翻，
+/// 来回浪费了两轮。托盘返回 ACCESS_DENIED 时，第一个要问的就是"我到底提权了没有"，
+/// 而这个答案必须来自令牌本身，不能靠猜"是不是右键以管理员运行"。
+fn elevation_report() -> String {
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
+        // 注意模块归属（编译期实测，别凭记忆写）：
+        //   OpenProcessToken 在 Win32::System::Threading
+        //   GetTokenInformation / TokenElevation / TOKEN_ELEVATION / TOKEN_QUERY 在 Win32::Security
+        use windows_sys::Win32::Security::{
+            GetTokenInformation, TokenElevation, TOKEN_ELEVATION, TOKEN_QUERY,
+        };
+        use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+        unsafe {
+            let mut token: HANDLE = std::ptr::null_mut();
+            if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) == 0 {
+                return "提权=未知（OpenProcessToken 失败）".into();
+            }
+            let mut elev: TOKEN_ELEVATION = std::mem::zeroed();
+            let mut ret = 0u32;
+            let ok = GetTokenInformation(
+                token,
+                TokenElevation,
+                &mut elev as *mut _ as *mut std::ffi::c_void,
+                std::mem::size_of::<TOKEN_ELEVATION>() as u32,
+                &mut ret,
+            );
+            let _ = CloseHandle(token);
+            if ok == 0 {
+                return "提权=未知（GetTokenInformation 失败）".into();
+            }
+            if elev.TokenIsElevated != 0 {
+                "提权=是 ← 这是托盘被拒 / 画面异常的已知诱因，请改用普通双击启动".into()
+            } else {
+                "提权=否".into()
+            }
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        "提权=不适用".into()
+    }
+}
+
+/// 托盘不可用时的兜底提示 + 键盘逃生入口。
+///
+/// 背景（OPEN-ISSUES 问题 2 / 问题 1）：
+///   * 这台机器上 `Shell_NotifyIcon` 返回 ACCESS_DENIED，托盘图标永远不出现；
+///   * 而"托盘右键菜单"是 v1 唯一的可靠入口 —— 托盘没了，用户就只能靠
+///     桌宠的右键菜单，可那需要他先精确点到角色身上。
+/// 所以这里补两件事：
+///   1) 托盘注册失败时，让前端弹一条常驻提示（告诉用户右键角色就够了）；
+///   2) 注册一个**全局**热键 Ctrl+Alt+Q（退出）与 Ctrl+Alt+S（设置），
+///      这样即使窗口被拖到屏幕外/整块穿透，用户也一定退得掉。
+#[cfg(windows)]
+fn install_escape_hatches(app: &AppHandle, tray_ok: bool) {
+    use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
+        RegisterHotKey, MOD_ALT, MOD_CONTROL, MOD_NOREPEAT,
+    };
+    use windows_sys::Win32::UI::WindowsAndMessaging::{GetMessageW, MSG, WM_HOTKEY};
+
+    const HK_QUIT: i32 = 0xA11;
+    const HK_SETTINGS: i32 = 0xA12;
+
+    if tray_ok {
+        return;
+    }
+    // 让前端在 boot 完成后弹一条提示（前端可能还没起来，所以轮询式重试）
+    let w = app.get_webview_window("main");
+    std::thread::spawn(move || {
+        let Some(w) = w else { return };
+        for _ in 0..30 {
+            std::thread::sleep(Duration::from_millis(500));
+            let js = "window.PresagePet && window.PresagePet.notice \
+                      && window.PresagePet.notice('托盘图标被系统拒绝注册：右键我 → 设置/退出；\
+或按 Ctrl+Alt+S 设置、Ctrl+Alt+Q 退出')";
+            if w.eval(js).is_ok() {
+                logln("[tray] 已提示前端：托盘不可用，请用右键菜单或 Ctrl+Alt+Q/S");
+                return;
+            }
+        }
+    });
+
+    std::thread::spawn(move || unsafe {
+        // 注册失败不影响主功能：只是没有快捷键兜底
+        let q = RegisterHotKey(std::ptr::null_mut(), HK_QUIT, (MOD_CONTROL | MOD_ALT | MOD_NOREPEAT) as u32, 'Q' as u32);
+        let s = RegisterHotKey(std::ptr::null_mut(), HK_SETTINGS, (MOD_CONTROL | MOD_ALT | MOD_NOREPEAT) as u32, 'S' as u32);
+        logln(format!(
+            "[hotkey] Ctrl+Alt+Q 退出={} Ctrl+Alt+S 设置={}",
+            if q != 0 { "ok" } else { "失败" },
+            if s != 0 { "ok" } else { "失败" }
+        ));
+        let mut msg: MSG = std::mem::zeroed();
+        // 这个线程只服务热键消息，退出时机跟着进程走
+        while GetMessageW(&mut msg, std::ptr::null_mut(), 0, 0) > 0 {
+            if msg.message != WM_HOTKEY {
+                continue;
+            }
+            let app = native_tray::app_handle();
+            let Some(app) = app else { continue };
+            match msg.wParam as i32 {
+                HK_QUIT => {
+                    logln("[hotkey] Ctrl+Alt+Q → 退出");
+                    app.exit(0);
+                }
+                HK_SETTINGS => {
+                    logln("[hotkey] Ctrl+Alt+S → 设置");
+                    crate::open_settings_window(&app);
+                }
+                _ => {}
+            }
+        }
+    });
+}
+
 fn main() {
     tauri::Builder::default()
         .setup(|app| {
@@ -785,7 +914,9 @@ fn main() {
             // 用原生 Shell_NotifyIcon 实现（Tauri 那个在这里创建成功但通知区不显示）。
             #[cfg(windows)]
             {
-                native_tray::install(app.handle());
+                let tray_ok = native_tray::install(app.handle());
+                // 托盘不可用时补上兜底：提示 + 全局热键（见函数注释）
+                install_escape_hatches(app.handle(), tray_ok);
             }
             #[cfg(not(windows))]
             {

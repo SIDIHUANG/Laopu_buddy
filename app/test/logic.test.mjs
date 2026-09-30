@@ -157,6 +157,57 @@ test('忙 优先于 庆祝：新工作开始时不演庆祝', () => {
   assert.equal(a.resolve(1200).anim, 'thinking');
 });
 
+test('庆祝时不许被 idle 抢走（v1 的抽搐就是这么来的）', () => {
+  // 真实日志（用户机器）：同一秒里 idle → thinking → celebrate → idle → thinking …
+  // 每条都写着"上一状态持续 0.0s"，画面上就是她抖个不停。
+  const a = new Arbiter();
+  a.ingest(ev(KIND.TURN_START, {}, { ts: 1000 }));
+  a.ingest(ev(KIND.TURN_END, { status: 'ok' }, { ts: 2000 }));
+  assert.equal(a.resolve(2100).anim, 'celebrate');
+  assert.equal(a.resolve(2400).anim, 'celebrate', 'celebrate(30) 期间不接受 idle(5) 抢占');
+  assert.equal(a.resolve(3500).anim, 'idle', '庆祝窗口（1.4s，对齐素材 16 帧@12fps）过后回落');
+});
+
+test('庆祝可以被更高优先级打断（新一轮/出错/等待）', () => {
+  const a = new Arbiter();
+  a.ingest(ev(KIND.TURN_START, {}, { ts: 1000 }));
+  a.ingest(ev(KIND.TURN_END, { status: 'ok' }, { ts: 2000 }));
+  assert.equal(a.resolve(2100).anim, 'celebrate');
+  a.ingest(ev(KIND.TURN_START, { turnId: 't2' }, { sessionId: 's2', ts: 2200 }));
+  assert.equal(a.resolve(2200).anim, 'thinking', 'thinking(55) > celebrate(30)，可以打断');
+});
+
+test('heldMs 反映真实停留时长，不再是恒 0', () => {
+  const a = new Arbiter();
+  a.ingest(ev(KIND.TURN_START, { turnId: 't1' }, { ts: 10000 }));
+  assert.equal(a.resolve(10000).anim, 'thinking');
+  assert.equal(a.resolve(13000).heldMs, 3000, '同一状态持续 3s 应能读出来');
+});
+
+test('事件把状态反复打断时，动画必须稳定在一个值上（防抖真的生效）', () => {
+  // 真实事故（用户机器 pet.log）：tool/call 与 tool/result 交替得很密，
+  // 结果日志里满屏 "state → working/thinking（上一状态持续 0.0s）"，
+  // 画面上就是她疯狂抽搐 —— 因为防抖记账每次 resolve 都被刷新，
+  // 2.2s 的窗口永远满足不了。
+  const a = new Arbiter();
+  const seen = [];
+  let ts = 5000;
+  a.ingest(ev(KIND.TURN_START, { turnId: 't1' }, { ts }));
+  seen.push(a.resolve(ts).anim);
+  for (let i = 0; i < 40; i++) {
+    ts += 100;
+    // 每 200ms 一次"工具开始/工具结束"，模拟密集的工具调用
+    if (i % 2 === 0) a.ingest(ev(KIND.TOOL_CALL, { callId: `c${i}` }, { ts }));
+    else a.ingest(ev(KIND.TOOL_RESULT, { callId: `c${i - 1}`, ok: true }, { ts }));
+    seen.push(a.resolve(ts).anim);
+    a.tick(ts);
+    seen.push(a.resolve(ts).anim);
+  }
+  const switches = seen.filter((v, i) => i > 0 && v !== seen[i - 1]).length;
+  assert.ok(switches <= 4,
+    `4 秒内状态切换应被防抖压到很少次，实际 ${switches} 次：${[...new Set(seen)].join(',')}`);
+});
+
 test('心跳不重置空闲计时（否则宠物永远不会睡着）', () => {
   const a = new Arbiter();
   const t0 = 1_000_000;
@@ -311,12 +362,15 @@ test('renderer：setState 必须自动开始渲染循环', () => {
   const rafCalls = [];
   globalThis.window = { devicePixelRatio: 1, addEventListener() {} };
   globalThis.requestAnimationFrame = (fn) => { rafCalls.push(fn); return rafCalls.length; };
-  // 渲染器现在会建离屏 canvas 做交叉淡化，所以需要 createElement 桩
+  // 渲染器现在会建离屏 canvas 做交叉淡化，并把尺寸写进 #stage 的 CSS 变量，
+  // 所以这两个 DOM 能力都要有桩。
+  const stage = { style: { setProperty() {} } };
   globalThis.document = {
     createElement: () => ({
       width: 0, height: 0,
       getContext: () => ({ setTransform() {}, clearRect() {}, drawImage() {} }),
     }),
+    getElementById: (id) => (id === 'stage' ? stage : null),
   };
   const ctx = { setTransform() {}, clearRect() {}, drawImage() {}, save() {}, restore() {},
     translate() {}, rotate() {}, scale() {} };

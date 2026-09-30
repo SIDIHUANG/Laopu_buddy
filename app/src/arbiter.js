@@ -25,14 +25,39 @@ const PRIORITY = {
   [ACTIVITY.IDLE]: 0,
 };
 
+/**
+ * 动画之间的抢占优先级（数值大的可以打断数值小的）。
+ *
+ * 和上面的 PRIORITY 分开：PRIORITY 决定"哪个会话说了算"，
+ * 这一张决定"当前这次演出能不能被换掉"。两个用途混在一起写会让
+ * celebrate（由会话空闲派生）和 thinking（由会话活跃派生）无法区分。
+ */
+const ANIM_PRIORITY = {
+  waiting: 100,
+  error: 80,
+  working: 65,
+  thinking: 55,
+  celebrate: 30,
+  doze: 20,
+  idle: 5,
+  sleep: 1,
+};
+
 // 活跃态多久没新事件就强制回落（保险丝）
 const DECAY_MS = 45_000;
 // 完全没有事件多久进入「打瞌睡 → 熟睡」
 const LONG_IDLE_MS = 5 * 60_000;
 // 趴下入睡这段过渡动画播多久，之后才切到熟睡循环
 const DOZE_HOLD_MS = 6000;
-// 完成后庆祝播放时长
-const CELEBRATE_MS = 3000;
+/**
+ * 完成后庆祝的时长。
+ *
+ * 取 1.4s 是为了和素材对齐并留一点余量：celebrate 是 16 帧 @12fps = 1.33s
+ * （`node tools/inspect_assets.py` 可复核）。之前是 3000ms，比动画长一倍多，
+ * 于是"她跳完了还愣在那里两秒"；而如果这期间有任何 idle↔celebrate 抖动，
+ * 就会在她身上表现为反复抽搐（v1 实测日志里每条都是「持续 0.0s」）。
+ */
+const CELEBRATE_MS = 1400;
 // 心跳多久没来算作降级
 const HEARTBEAT_STALE_MS = 30_000;
 // 「忙碌组」内互切需要持续这么久才提交，否则 thinking/working 会随短工具调用高频抖动。
@@ -55,6 +80,11 @@ export class Arbiter {
     this._epoch = 0;
     this._lastKey = '';
     this._committedAnim = null;
+    /** 当前状态是什么时候提交的：日志里的"持续 Xs"就是它算出来的 */
+    this._committedSince = 0;
+    /** 一次性动画（celebrate / doze）在什么时候之前不接受低优先级抢占 */
+    this._oneShotUntil = 0;
+    this._oneShotFor = null;
     this._pendingAnim = null;
     this._pendingSince = 0;
     this.listeners = new Set();
@@ -245,7 +275,14 @@ export class Arbiter {
       this.dozing = false;
       changed = true;
     }
-    if (changed) this._emit();
+    // 一次性动画播完：必须主动推一次，否则 celebrate/doze 会把画面"锁"在那里
+    // 直到下一个事件到来（用户看到的是她卡住不动）。
+    if (this._oneShotUntil && now >= this._oneShotUntil) {
+      this._oneShotUntil = 0;
+      this._oneShotFor = null;
+      changed = true;
+    }
+    if (changed) this._emit(now);
     else this._emitIfKeyChanged(now);
   }
 
@@ -295,27 +332,60 @@ export class Arbiter {
       anim = 'idle';
     }
 
-    // 忙碌组内互切做防抖：一个 200ms 的工具调用不该让宠物闪一下键盘又闪回去。
-    // 高优先级切换（等待/出错）不受限制，永远立即生效。
-    if (this._committedAnim && anim !== this._committedAnim
-        && BUSY_GROUP.has(anim) && BUSY_GROUP.has(this._committedAnim)) {
-      if (this._pendingAnim !== anim) {
-        this._pendingAnim = anim;
-        this._pendingSince = now;
-      }
-      if (now - this._pendingSince < BUSY_DWELL_MS) {
-        anim = this._committedAnim;
+    const prev = this._committedAnim;
+    if (prev && anim !== prev) {
+      const now2 = now;
+      const urgent = anim === 'waiting' || anim === 'error';
+      // 1) 一次性动画（celebrate / doze）按**优先级**决定能不能被抢：
+      //    celebrate(30) 挡住 idle(5)，但挡不住 thinking(55)/working(65) ——
+      //    否则 TURN_END 紧跟 TURN_START 或 TURN_END→idle 的抖动，
+      //    会让她在同一秒里"庆祝一帧 → 站着 → 庆祝一帧"地抽搐（实测日志里全是 0.0s）。
+      const heldByOneShot = this._oneShotUntil > now && !urgent
+        && (ANIM_PRIORITY[anim] ?? 0) <= (ANIM_PRIORITY[prev] ?? 0);
+      // 2) 忙碌组内互切要停留够久：工具调用之间模型思考一两秒是常态，
+      //    每次都切会让 working 的"拿出电脑"开头反复重播（实测症状）。
+      //
+      // ⚠️ 记账必须"只在候选变化时写时间戳"。resolve() 每 200ms 就会被调一次
+      //    （tick + 每次事件），如果每次调用都刷新 _pendingSince，
+      //    那么 now - _pendingSince 永远是 0 —— 防抖窗口就永远不会被满足，
+      //    状态反而每次都被放行。v1.1 第一版就是这么写的，
+      //    日志里满屏"持续 0.0s"就是这么来的。
+      let heldByDwell = false;
+      if (!heldByOneShot && BUSY_GROUP.has(anim) && BUSY_GROUP.has(prev)) {
+        if (this._pendingAnim !== anim) {
+          this._pendingAnim = anim;
+          this._pendingSince = now2;
+        }
+        heldByDwell = (now2 - (this._pendingSince || now2)) < BUSY_DWELL_MS;
       } else {
         this._pendingAnim = null;
+        this._pendingSince = 0;
       }
-    } else {
-      this._pendingAnim = null;
+      if (heldByOneShot || heldByDwell) {
+        anim = prev;
+      } else {
+        this._committedSince = now2;
+      }
+    } else if (!prev) {
+      this._committedSince = now;
     }
     this._committedAnim = anim;
-    const oneShot = anim === 'celebrate' || anim === 'doze';
+    // 记录本次状态还能"霸占"多久（一次性动画播完之前不接受低优先级抢占）
+    const oneShotMs = { celebrate: CELEBRATE_MS, doze: DOZE_HOLD_MS }[anim] || 0;
+    if (oneShotMs > 0 && this._oneShotFor !== anim) {
+      this._oneShotFor = anim;
+      this._oneShotUntil = now + oneShotMs;
+    } else if (oneShotMs === 0) {
+      this._oneShotFor = null;
+      this._oneShotUntil = 0;
+    }
+    const oneShot = oneShotMs > 0;
     return {
       anim,
       oneShot,
+      // 这一状态已经持续了多久：日志里用它判断"working 到底有没有被看见"。
+      // v1 之前这里恒为 0.0s（每次 resolve 都被覆盖），等于没有信息。
+      heldMs: Math.max(0, now - (this._committedSince || now)),
       waiting: st.waiting.length,
       errors: st.errors.length,
       working: st.working.length,

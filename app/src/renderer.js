@@ -30,8 +30,13 @@ const LIFT = {
 const HEADROOM = 0.34;
 
 export class PetRenderer {
-  constructor(canvas, lib, { size = 200, view = null } = {}) {
+  constructor(canvas, lib, { size = 200, view = null, hit = null } = {}) {
     this.canvas = canvas;
+    /**
+     * 可见的占位盒（和画布同尺寸）。canvas 本身已经不在 DOM 里了：
+     * 它只负责"像素"（命中遮罩读它），坐标与拖拽交给这个盒子。
+     */
+    this.hit = hit;
     // willReadFrequently：指针遮罩要不断 getImageData 读 alpha，
     // 不开这个每次都会从 GPU 回读，白白浪费。
     this.ctx = canvas.getContext('2d', { willReadFrequently: true });
@@ -88,19 +93,23 @@ export class PetRenderer {
     this.height = Math.round(this.size * (1 + HEADROOM));
     this.canvas.width = Math.round(this.size * dpr);
     this.canvas.height = Math.round(this.height * dpr);
-    this.canvas.style.width = `${this.size}px`;
-    this.canvas.style.height = `${this.height}px`;
+    // 画布不在 DOM 里，尺寸只体现在位图上；可见尺寸给占位盒
+    if (this.hit) {
+      this.hit.style.width = `${this.size}px`;
+      this.hit.style.height = `${this.height}px`;
+    }
     this.prev.width = this.canvas.width;
     this.prev.height = this.canvas.height;
     this.applyBaseTransform();
     this.layoutDom();
   }
 
-  /** 把两层 DOM 精灵对齐到画布的盒子（贴底，留出上方提拉空间） */
+  /** 把两层 DOM 精灵对齐到可见盒（贴底，留出上方提拉空间） */
   layoutDom() {
     if (!this.view) return;
-    const left = this.canvas.offsetLeft;
-    const top = this.canvas.offsetTop + (this.height - this.size);
+    const box = this.hit || this.canvas;
+    const left = box.offsetLeft;
+    const top = box.offsetTop + (this.height - this.size);
     for (const el of [this.view.prev, this.view.cur]) {
       if (!el) continue;
       el.style.left = `${left}px`;
@@ -178,10 +187,16 @@ export class PetRenderer {
     // 交叉淡化：新画面淡入、旧画面淡出（用内联 opacity 逐帧推进，
     // 不依赖 CSS transition —— 少一个合成器特性就少一个失败点）
     const f = Math.min(1, Math.max(0, this.fade));
-    cur.style.opacity = String(f);
+    const op = this.opacity ?? 1; // 设置页的透明度乘进来
+    cur.style.opacity = String(f * op);
     if (this.view.prev) {
-      this.view.prev.style.opacity = String(1 - f);
+      this.view.prev.style.opacity = String((1 - f) * op);
     }
+  }
+
+  /** 设置页的"透明度"：作用在**可见的 DOM 层**上（canvas 已经不可见了） */
+  setOpacity(v) {
+    this.opacity = Math.max(0.2, Math.min(1, Number(v) || 1));
   }
 
   /** 与 canvas 版等价的提拉形变（支点在底部中心） */

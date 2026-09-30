@@ -96,15 +96,15 @@
       .bubble .text { color: #c8ccd4; font-size: 12px; margin-top: 1px; }
       .bubble .hint { display: block; font-size: 11px; color: #a9b0bb; font-weight: normal; }
       .bubble.merged { cursor: pointer; }
-      #pet-canvas { display: block; cursor: grab; }
-      #pet-canvas:active { cursor: grabbing; }
+      #pet-hit { display: block; cursor: grab; }
+      #pet-hit:active { cursor: grabbing; }
       /* 可见的角色**不再由 canvas 绘制**。
          实测（用户机器）：canvas 的像素是对的（命中遮罩 hitmask filled 非 0），
-         但在某些会话里整个 canvas 图层就是不被合成显示 ✗ —— 只剩气泡文字。
-         而同一台机器上 DOM 与 PNG（气泡、气泡皮肤的图）一直正常 ✓，
-         所以角色改由下面两层 DOM 背景图渲染，走和气泡皮肤一样的路径。
-         canvas 用 opacity:0 保留在布局里：命中遮罩要靠它的像素与它的事件盒。 */
-      #pet-canvas { opacity: 0; }
+         但在某些会话里整个 canvas 图层就是不被合成显示 ✗。
+         而且把它 opacity:0 藏起来后，连它的像素都被合成器丢掉了 ✗（点击随之失效 ✗）。
+         所以：canvas 彻底移出 DOM（由 JS 创建、永不挂载 → 像素纯 CPU 计算 ✓），
+         可见角色由下面两层 DOM 背景图渲染（与气泡皮肤同一条路径 ✓），
+         而坐标与拖拽交给这个和画布同尺寸的占位盒 #pet-hit ✓。 */
       .pet-layer {
         position: absolute; left: 0; top: 0;
         background-repeat: no-repeat;
@@ -280,7 +280,7 @@
     </script>
     <div id="stage">
       <div id="bubble-list"></div>
-      <canvas id="pet-canvas"></canvas>
+      <div id="pet-hit"></div>
       <div class="pet-layer" id="pet-prev"></div>
       <div class="pet-layer" id="pet-cur"></div>
       <div id="collapsed-count"></div>

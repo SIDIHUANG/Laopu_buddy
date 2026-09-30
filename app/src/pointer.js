@@ -65,8 +65,13 @@ export function frontLog(msg) {
 }
 
 export class PointerBridge {
-  constructor({ canvas, onLog, onGesture, onLift, onClear, onSettings, onDragEnd } = {}) {
+  constructor({ canvas, hit, onLog, onGesture, onLift, onClear, onSettings, onDragEnd } = {}) {
     this.canvas = canvas;
+    /**
+     * 可见的占位盒：坐标归一化与拖拽事件都基于它。
+     * canvas 已移出 DOM（只用于取像素），它没有布局盒可用 ✗。
+     */
+    this.hit = hit || canvas;
     this.onLog = onLog || (() => {});
     this.onGesture = onGesture || (() => {});
     this.onLift = onLift || (() => {});
@@ -147,7 +152,8 @@ export class PointerBridge {
     // 1) 精灵图：按 alpha 采样
     const cv = this.canvas;
     if (cv && cv.width > 0 && cv.height > 0) {
-      const rect = cv.getBoundingClientRect();
+      // 像素来自 canvas（已移出 DOM），但坐标要按**可见盒**归一化
+      const rect = (this.hit || cv).getBoundingClientRect();
       try {
         const ctx = cv.getContext('2d');
         const data = ctx.getImageData(0, 0, cv.width, cv.height).data;
@@ -211,7 +217,7 @@ export class PointerBridge {
    * 改成自己按指针位移调用 setPosition：渲染循环照常跑，形变才看得见。
    */
   attachDrag() {
-    const target = this.canvas;
+    const target = this.hit || this.canvas;
     if (!target) return;
     const THRESHOLD = 4;
     const LONG_PRESS_MS = 900;

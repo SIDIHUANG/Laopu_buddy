@@ -81,7 +81,10 @@ async function boot() {
   const lib = new SpriteLibrary(ASSET_BASE, manifest);
   const arbiter = new Arbiter({ lock: 'auto' });
 
-  const canvas = document.getElementById('pet-canvas');
+  // canvas 已移出 DOM：只用来算命中遮罩的像素（纯 CPU，不受合成器影响）。
+  // 可见盒与拖拽交给同尺寸的 #pet-hit。
+  const canvas = document.createElement('canvas');
+  const hit = document.getElementById('pet-hit');
   const renderer = new PetRenderer(canvas, lib, {
     size: 200,
     // 可见角色由这两层 DOM 渲染（canvas 只留着算命中遮罩）
@@ -89,6 +92,8 @@ async function boot() {
       prev: document.getElementById('pet-prev'),
       cur: document.getElementById('pet-cur'),
     },
+    // 可见占位盒：坐标、尺寸、拖拽都靠它（canvas 已移出 DOM）
+    hit,
   });
 
   const list = document.getElementById('bubble-list');
@@ -127,7 +132,7 @@ async function boot() {
     const now = Date.now();
     if (now - lastLayoutLog < 2000) return;
     lastLayoutLog = now;
-    const c = canvas.getBoundingClientRect();
+    const c = hit.getBoundingClientRect();
     const b = container.querySelector('.bubble')?.getBoundingClientRect();
     // 尾巴的真实位置 = 气泡左缘 + 尾巴在气泡内的偏移（不是气泡中心，之前这里标错过）
     let tailX = null;
@@ -286,7 +291,7 @@ async function boot() {
             settings._savedPos = await win.outerPosition();
             // 记住角色此刻在屏幕上的位置：放大窗口时要让她**原地不动**，
             // 否则窗口一变大会把她挤到别处，用户就看不清自己调的大小了
-            const r = canvas.getBoundingClientRect();
+            const r = hit.getBoundingClientRect();
             const dpr0 = window.devicePixelRatio || 1;
             settings._anchor = {
               x: settings._savedPos.x + (r.left + r.width / 2) * dpr0,
@@ -299,7 +304,7 @@ async function boot() {
           const a = settings._anchor;
           if (a) {
             const dpr = window.devicePixelRatio || 1;
-            const r2 = canvas.getBoundingClientRect();
+            const r2 = hit.getBoundingClientRect();
             const cur = await win.outerPosition();
             const wantX0 = Math.round(a.x - (r2.left + r2.width / 2) * dpr);
             const wantY0 = Math.round(a.y - r2.bottom * dpr);
@@ -362,6 +367,7 @@ async function boot() {
 
   pointer = new PointerBridge({
     canvas,
+    hit,
     onLog: (m) => { frontLog(`pointer ${m}`); if (debug) hud.textContent = m; },
     onGesture: (g) => {
       frontLog(`gesture ${g.type}${g.durationMs ? ` ${Math.round(g.durationMs)}ms` : ''}`);
@@ -525,8 +531,8 @@ async function boot() {
 
   /** 气泡叠放位置随画布尺寸变，所以抽成函数，改尺寸后要重算 */
   function applyBubbleOverlap() {
-    const canvasSize = canvas.clientWidth;
-    const canvasH = canvas.clientHeight;
+    const canvasSize = hit.clientWidth;
+    const canvasH = hit.clientHeight;
     const heights = Object.values(manifest.states)
       .map((s) => (s.on_screen_px ? s.on_screen_px[1] : 0));
     const maxContentH = Math.max(...heights, 1);
@@ -566,7 +572,7 @@ async function boot() {
         await win.setSize(tauriLogicalSize(want.w, want.h));
         await win.setAlwaysOnTop(appearance.alwaysOnTop);
       }],
-      ['透明度', () => { canvas.style.opacity = String(appearance.opacity); }],
+      ['透明度', () => { renderer.setOpacity(appearance.opacity); }],
       ['穿透', async () => { await pointer?.setEnabled(appearance.clickThrough); }],
     ];
     for (const [name, fn] of steps) {
@@ -769,7 +775,7 @@ async function boot() {
   function selfTestDrag() {
     const sx = 400; const sy = 400;
     frontLog('selftest 开始模拟拖拽');
-    canvas.dispatchEvent(new MouseEvent('mousedown',
+    hit.dispatchEvent(new MouseEvent('mousedown',
       { bubbles: true, button: 0, screenX: sx, screenY: sy }));
     for (let i = 1; i <= 8; i++) {
       setTimeout(() => {
@@ -871,11 +877,11 @@ async function boot() {
       })();
       return;
     }
-    const rect = canvas.getBoundingClientRect();
+    const rect = hit.getBoundingClientRect();
     const x = rect.left + rect.width / 2;
     const y = rect.top + rect.height * 0.7;
     for (let i = 0; i < times; i++) {
-      canvas.dispatchEvent(new MouseEvent('mousedown',
+      hit.dispatchEvent(new MouseEvent('mousedown',
         { bubbles: true, button: 0, screenX: 500 + i, screenY: 400 }));
       window.dispatchEvent(new MouseEvent('mouseup',
         { bubbles: true, button: 0, screenX: 500 + i, screenY: 400 }));

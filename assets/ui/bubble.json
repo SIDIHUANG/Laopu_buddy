@@ -1,0 +1,28 @@
+{
+  "file": "ui/bubble.png",
+  "source": "通知对话气泡.png",
+  "size": [
+    1235,
+    1241
+  ],
+  "slice": {
+    "top": 423,
+    "bottom": 423,
+    "left": 254,
+    "right": 254
+  },
+  "border": {
+    "top": 11,
+    "right": 16,
+    "bottom": 21,
+    "left": 16
+  },
+  "tailRatio": 0.4561,
+  "measuredStroke": {
+    "top": 56,
+    "bottom": 159,
+    "left": 64,
+    "right": 75
+  },
+  "note": "slice 按源图像素给 border-image-slice；border 是按宠物默认尺寸给的渲染厚度"
+}

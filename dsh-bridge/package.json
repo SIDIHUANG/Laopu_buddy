@@ -1,0 +1,23 @@
+{
+  "name": "dsh-presage-bridge",
+  "version": "0.1.0",
+  "private": false,
+  "type": "module",
+  "description": "把 DSH 的 agent 状态写给普瑞塞斯桌宠（通过扩展点主动 emit 明文 JSONL）",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js"
+  },
+  "files": [
+    "lib",
+    "README.md"
+  ],
+  "keywords": [
+    "dsh",
+    "plugin",
+    "desktop-pet"
+  ],
+  "peerDependencies": {
+    "@deepseek-ai/schemastery": "*"
+  }
+}

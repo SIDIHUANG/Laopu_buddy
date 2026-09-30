@@ -1,0 +1,291 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>普瑞塞斯</title>
+    <style>
+      :root {
+        --bubble-bg: rgba(28, 30, 38, .92);
+        --waiting: #2f9e5f;
+        --error: #c0392b;
+        --done: #2b6cb0;
+        --info: #4a5568;
+      }
+      html, body { margin: 0; height: 100%; background: transparent; overflow: hidden; }
+      body {
+        font: 13px/1.55 system-ui, "Microsoft YaHei", sans-serif;
+        display: flex; align-items: flex-end; justify-content: center;
+      }
+      #stage { position: relative; display: flex; flex-direction: column; align-items: center; }
+      #bubble-list {
+        display: flex; flex-direction: column; gap: 4px; align-items: center;
+        /* 负外边距把气泡压下来，让尾巴盖住小人的头一点——像她在说话 */
+        margin-bottom: -20px; width: max-content; max-width: 100%;
+      }
+      .bubble {
+        /* border-box 很关键：否则 max-width 只算内容盒，
+           加上 border-image 的左右边框后整体会超出窗口，左边缘就被截断了 */
+        box-sizing: border-box;
+        background: var(--bubble-bg); color: #f2f3f5;
+        border-radius: 10px; padding: 7px 10px; min-width: 130px; max-width: 214px;
+        border-left: 3px solid var(--info);
+        box-shadow: 0 3px 10px rgba(0, 0, 0, .28);
+        cursor: default; animation: pop .18s ease-out;
+      }
+      /* 只用透明度做入场动画：transform 要留给「尾巴对准角色」的位移 */
+      @keyframes pop { from { opacity: 0; } }
+
+      /* ---- 气泡皮肤：用九宫格素材当气泡框 ---- */
+      /* 四角与尾巴保持原样，只有中段随文字长度拉伸；底色来自 border-image 的 fill。 */
+      body.bubble-skin .bubble {
+        border-style: solid;
+        border-width: var(--bub-top) var(--bub-right) var(--bub-bottom) var(--bub-left);
+        border-image: var(--bub-img) var(--bub-slice) fill /
+          var(--bub-top) var(--bub-right) var(--bub-bottom) var(--bub-left) stretch;
+        background: transparent;
+        border-radius: 0;
+        box-shadow: none;
+        padding: 0;
+        min-width: 0;
+        /* 收窄：宽气泡会让尾巴明显偏在气泡左侧，而且台词要多行才排得下 */
+        max-width: 186px;
+        color: #23262c;                     /* 灰玻璃底上要用深色字 */
+        filter: drop-shadow(0 3px 5px rgba(0, 0, 0, .22));
+        /* 字号要比外面小：Windows 的"文本大小"辅助功能会整体放大文字，
+           实测气泡里的汉字达到 16px，一句台词要折三行 */
+        font-size: 11.5px; line-height: 1.38;
+      }
+      body.bubble-skin .bubble .row b { font-size: 11.5px; line-height: 1.38; }
+      body.bubble-skin .bubble .text { font-size: 10.5px; line-height: 1.38; }
+      /* 正文行里的小标签：做成很轻的一小块，不跟标题抢地方 */
+      body.bubble-skin .bubble .meta { display: flex; justify-content: flex-end; margin-top: 1px; }
+      .bubble .meta .agent {
+        font-size: 9.5px; padding: 0 5px; border-radius: 999px;
+        background: rgba(0, 0, 0, .10); color: #4a5058;
+      }
+      /* 关闭按钮平时不占视觉重量，指到气泡才显出来 */
+      .bubble .row button { opacity: 0; transition: opacity .12s; }
+      .bubble:hover .row button { opacity: 1; }
+      .bubble .row b { flex: 1; }
+      body.bubble-skin .bubble .row b { color: #14161a; }
+      body.bubble-skin .bubble .text { color: #3c424c; }
+      body.bubble-skin .bubble .agent {
+        background: rgba(0, 0, 0, .10); color: #2c3038;
+      }
+      body.bubble-skin .bubble .row button { color: #4a505a; }
+      body.bubble-skin .bubble .row button:hover { color: #000; }
+      body.bubble-skin .bubble.waiting .row b { color: #0d5c33; }
+      body.bubble-skin .bubble.error .row b { color: #8c2018; }
+      body.bubble-skin .bubble.done .row b { color: #10457e; }
+      @keyframes pop { from { opacity: 0; } }
+      .bubble.waiting { border-left-color: var(--waiting); }
+      .bubble.error { border-left-color: var(--error); }
+      .bubble.done { border-left-color: var(--done); }
+      .bubble .row { display: flex; align-items: center; gap: 6px; }
+      .bubble .row b { font-size: 13px; }
+      .bubble .agent {
+        font-size: 10px; padding: 1px 5px; border-radius: 6px;
+        background: rgba(255, 255, 255, .14); color: #cfd3da;
+      }
+      .bubble .row button {
+        margin-left: auto; border: 0; background: transparent; color: #98a0ad;
+        font-size: 15px; line-height: 1; cursor: pointer; padding: 0 2px;
+      }
+      .bubble .row button:hover { color: #fff; }
+      .bubble .text { color: #c8ccd4; font-size: 12px; margin-top: 1px; }
+      .bubble .hint { display: block; font-size: 11px; color: #a9b0bb; font-weight: normal; }
+      .bubble.merged { cursor: pointer; }
+      #pet-canvas { display: block; cursor: grab; }
+      #pet-canvas:active { cursor: grabbing; }
+      /* 只有台词的点击气泡没有正文，别留一行空白 */
+      .bubble .text:empty { display: none; }
+      #collapsed-count { font-size: 11px; color: #9aa1ac; margin-top: 2px; }
+      #hud {
+        position: fixed; left: 6px; top: 6px; font: 11px/1.5 ui-monospace, Consolas, monospace;
+        color: #dfe3e8; background: rgba(0, 0, 0, .55); padding: 4px 7px; border-radius: 6px;
+        white-space: pre-wrap; max-width: 90%;
+      }
+      #ctx-menu {
+        position: fixed; z-index: 200; min-width: 118px; padding: 4px;
+        background: rgba(28, 30, 38, .96); border-radius: 8px; color: #eef0f4;
+        box-shadow: 0 4px 14px rgba(0, 0, 0, .35); font-size: 12px;
+        border: 1px solid rgba(255, 255, 255, .1);
+      }
+      #ctx-menu[hidden] { display: none; }
+      #ctx-menu button {
+        display: block; width: 100%; text-align: left; border: 0; cursor: pointer;
+        background: transparent; color: inherit; font: inherit; padding: 5px 8px; border-radius: 5px;
+      }
+      #ctx-menu button:hover { background: rgba(255, 255, 255, .12); }
+
+      /* ---------- 设置页 ---------- */
+      #settings {
+        width: 460px; max-width: 92vw; padding: 0;
+        /* 高度只占上半屏：下半屏留给桌宠，调大小/透明度时能实时看到她（用户要求） */
+        max-height: 58vh;
+        /* 贴顶而不是居中：默认 dialog 是 margin:auto 居中，会正好压住角色 */
+        margin: 10px auto auto;
+        border: 1px solid #3a4049; border-radius: 12px;
+        background: #1b1e24; color: #e8eaee;
+        font: 12.5px/1.6 "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+        box-shadow: 0 18px 48px rgba(0, 0, 0, .5);
+      }
+      /* 不用压暗背景：那会把桌宠一起压暗 */
+      #settings::backdrop { background: transparent; }
+      #settings header {
+        display: flex; align-items: center; gap: 8px;
+        padding: 10px 12px; border-bottom: 1px solid #2c313a;
+        position: sticky; top: 0; background: #1b1e24; border-radius: 12px 12px 0 0;
+      }
+      #settings header b { font-size: 13.5px; }
+      #settings header .spacer { flex: 1; }
+      /* 面板本体要能滚动：设置项很长，没有 overflow 的话下半部分够不到
+         （用户实测："只看到费用卡片，没有大小/台词等设置"） */
+      /* 注意：必须写成 [open] 时才是 flex —— <dialog> 关闭状态靠默认的 display:none，
+         直接写 #settings{display:flex} 会把"关闭"变成"一直显示"（实测症状：
+         桌宠窗口里总跟着一块"设置/刷新/关闭"的头部）。 */
+      #settings[open] { display: flex; flex-direction: column; }
+      #settings-body { flex: 1; min-height: 0; overflow-y: auto; }
+      #settings header button {
+        background: #2a2f38; color: #dfe3e9; border: 1px solid #3a4049;
+        border-radius: 7px; padding: 4px 10px; cursor: pointer; font-size: 12px;
+      }
+      #settings header button:hover { background: #343a45; }
+      #settings-status { font-size: 11.5px; color: #8d96a3; }
+      #settings-status.bad { color: #ff8b7a; }
+      #settings-body { padding: 12px; display: flex; flex-direction: column; gap: 14px; }
+      #settings-body h3 { margin: 0 0 7px; font-size: 12px; font-weight: 600; color: #98a2b0; }
+      #settings-body .cards { display: flex; flex-direction: column; gap: 8px; }
+      #settings-body .card {
+        border: 1px solid #2f353f; border-radius: 9px; padding: 9px 11px; background: #20242b;
+      }
+      #settings-body .card-h { display: flex; align-items: center; gap: 8px; }
+      #settings-body .big { font-size: 22px; font-weight: 600; margin: 3px 0 6px; }
+      #settings-body .big .unit { font-size: 11px; color: #8d96a3; margin-left: 6px; font-weight: 400; }
+      #settings-body .rows { display: grid; grid-template-columns: 1fr 1fr; gap: 2px 12px; }
+      #settings-body .rows div { display: flex; justify-content: space-between; }
+      #settings-body .rows span { color: #8d96a3; }
+      #settings-body .badge {
+        font-size: 10.5px; padding: 1px 7px; border-radius: 999px;
+        background: #2b3a2e; color: #7fd39a;
+      }
+      #settings-body .badge.no-key { background: #3a3526; color: #e0c46a; }
+      #settings-body .badge.error { background: #3d2724; color: #ff9b8a; }
+      #settings-body .badge.unavailable { background: #33363c; color: #a7aeb9; }
+      #settings-body .muted { color: #8d96a3; }
+      #settings-body .small { font-size: 11.5px; }
+      #settings-body form { display: flex; flex-direction: column; gap: 8px; }
+      #settings-body .chk { display: flex; align-items: center; gap: 7px; }
+      #settings-body .field { display: flex; align-items: center; gap: 8px; }
+      #settings-body .field span { width: 84px; color: #98a2b0; flex: none; }
+      #settings-body input[type=text],
+      #settings-body input[type=password],
+      #settings-body input[type=number],
+      #settings-body select {
+        flex: 1; background: #171a20; border: 1px solid #3a4049; color: #e8eaee;
+        border-radius: 7px; padding: 5px 8px; font: inherit;
+      }
+      #settings-body input[type=number] { flex: none; width: 84px; }
+      #settings-body .field span.muted { width: auto; }
+      #settings-body input[type=checkbox] { accent-color: #5b8cff; }
+      #settings-body hr { border: none; border-top: 1px solid #2c313a; margin: 3px 0; }
+      #settings-body .actions { display: flex; gap: 8px; margin-top: 2px; }
+      #settings-body .actions button {
+        background: #3b6ef0; color: #fff; border: none; border-radius: 7px;
+        padding: 6px 13px; cursor: pointer; font: inherit;
+      }
+      #settings-body .actions button[type=button] { background: #2a2f38; border: 1px solid #3a4049; }
+      #settings-body .actions button:hover { filter: brightness(1.12); }
+      /* 台词库编辑器 */
+      #settings-body .cats { display: flex; flex-direction: column; gap: 6px; }
+      #settings-body details.cat {
+        border: 1px solid #2f353f; border-radius: 8px; background: #20242b; padding: 6px 9px;
+      }
+      #settings-body details.cat summary { cursor: pointer; display: flex; gap: 6px; align-items: baseline; }
+      #settings-body .chips { display: flex; flex-wrap: wrap; gap: 4px; margin: 7px 0 6px; }
+      #settings-body .chip {
+        display: inline-flex; align-items: center; gap: 4px;
+        background: #2a2f38; border: 1px solid #3a4049; border-radius: 999px;
+        padding: 2px 4px 2px 8px; font-size: 11.5px; max-width: 100%;
+      }
+      #settings-body .chip button {
+        background: none; border: none; color: #98a2b0; cursor: pointer;
+        font-size: 13px; line-height: 1; padding: 0 3px;
+      }
+      #settings-body .chip button:hover { color: #ff8b7a; }
+      #settings-body .addline { display: flex; gap: 6px; align-items: center; }
+      #settings-body .addline input {
+        flex: 1; background: #171a20; border: 1px solid #3a4049; color: #e8eaee;
+        border-radius: 7px; padding: 4px 8px; font: inherit;
+      }
+      #settings-body .addline button {
+        background: #2a2f38; color: #dfe3e9; border: 1px solid #3a4049;
+        border-radius: 7px; padding: 4px 10px; cursor: pointer; font: inherit; font-size: 12px;
+      }
+      #settings-body .addline button:hover { background: #343a45; }
+      #settings-body code { background: #171a20; padding: 1px 5px; border-radius: 4px; font-size: 11.5px; }
+
+      /* ---- 独立设置窗口（?view=settings）：面板铺满，不显示桌宠相关元素 ---- */
+      body.settings-window { background: #1b1e24; }
+      body.settings-window #stage,
+      body.settings-window #bubble-list,
+      body.settings-window #hud,
+      body.settings-window #ctx-menu { display: none; }
+      body.settings-window #settings[open] {
+        width: 100%; max-width: none; height: 100%; max-height: none;
+        margin: 0; border: none; border-radius: 0; box-shadow: none;
+        display: flex; flex-direction: column;
+      }
+      /* 页面底色由窗口 background_color 提供（Rust 侧设置），避免加载瞬间的白色闪屏 */
+      body.settings-window { background: #1b1e24; }
+    </style>
+  </head>
+  <body>
+    <!-- 早期错误通道：模块图加载/求值失败时，main.js 里的处理器还没注册，
+         桌面窗口会表现为"什么都没有"而日志一片空白。这段内联脚本先兜住。 -->
+    <script>
+      (function () {
+        function send(m) {
+          try {
+            var T = window.__TAURI__;
+            if (T && T.core && T.core.invoke) T.core.invoke('front_log', { msg: '[early] ' + m });
+            else console.error(m);
+          } catch (e) { /* 忽略 */ }
+        }
+        window.addEventListener('error', function (e) {
+          send((e.message || 'script error') + ' @' + (e.filename || '?') + ':' + (e.lineno || 0) + ':' + (e.colno || 0));
+        });
+        window.addEventListener('unhandledrejection', function (e) {
+          var r = e.reason;
+          send('REJECT ' + ((r && (r.stack || r.message)) || String(r)));
+        });
+      })();
+    </script>
+    <div id="stage">
+      <div id="bubble-list"></div>
+      <canvas id="pet-canvas"></canvas>
+      <div id="collapsed-count"></div>
+    </div>
+    <div id="hud"></div>
+    <div id="ctx-menu" hidden>
+      <button data-action="settings">设置…</button>
+      <button data-action="interactive">强制可交互 60 秒</button>
+      <button data-action="through">强制穿透 5 秒</button>
+      <button data-action="clear">清除全部气泡</button>
+      <button data-action="quit">退出</button>
+    </div>
+
+    <dialog id="settings">
+      <header>
+        <b>设置</b>
+        <span id="settings-status"></span>
+        <span class="spacer"></span>
+        <button id="settings-refresh" type="button">刷新</button>
+        <button id="settings-close" type="button">关闭</button>
+      </header>
+      <div id="settings-body"></div>
+    </dialog>
+    <script type="module" src="src/main.js"></script>
+  </body>
+</html>

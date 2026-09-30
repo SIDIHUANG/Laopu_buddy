@@ -1,0 +1,24 @@
+[package]
+name = "presage-pet"
+version = "0.1.0"
+edition = "2021"
+description = "普瑞塞斯桌面宠物"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon", "image-png"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# 只为了自己精确控制 WS_EX_TRANSPARENT：Tauri 的 set_ignore_cursor_events
+# 只加不减，导致切回「可交互」时窗口仍然穿透（实测确认）。
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_UI_Shell",
+    "Win32_System_LibraryLoader",
+    "Win32_Graphics_Gdi",
+    "Win32_System_StationsAndDesktops",
+    "Win32_System_Threading",
+] }

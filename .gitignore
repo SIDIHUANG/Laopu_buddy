@@ -1,0 +1,26 @@
+# 构建产物
+app/src-tauri/target/
+app/dist/
+v1/
+
+# 运行时数据（日志、事件流、WebView2 用户数据）
+runtime/
+
+# 原始素材（大文件，不进仓库；用 tools/build_sprites.py 重新生成 assets/）
+avatar_baseline/
+
+# 依赖
+node_modules/
+
+# 临时草稿（rust 语法/链接试验留下的）
+tools/_rustcheck/
+
+# 系统
+Thumbs.db
+desktop.ini
+
+# 预览产物（gif/对照图，用 tools 里的脚本可随时重新生成）
+assets/preview/
+
+# 素材管线的中间产物：视频抽帧序列（800+ MB，可由 avatar_baseline 的视频重新生成）
+assets/_raw/

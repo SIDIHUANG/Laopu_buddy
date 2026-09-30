@@ -1,0 +1,197 @@
+# 普瑞塞斯桌宠 · v1 基线
+
+> 基线日期：2026-10-01 · 版本：v1（可用，带一个未解决的环境级问题）
+> git 基线：提交 `9c4da40`（2214 个文件，工作区干净）
+> 用法：双击 `v1\启动桌宠.bat`（或根目录的 `启动桌宠.bat`）
+> 日志：`runtime\pet.out.log`，同时写 `%LOCALAPPDATA%\PresagePet\pet.log`（无控制台也能查）
+
+## 0. v1 包内容（`v1\`）
+
+| 文件 | 说明 |
+|---|---|
+| `presage-pet.exe` | **release 构建，44.3 MB**（debug 版 269 MB，不要用）；前端与素材已编入二进制 |
+| **`WebView2Loader.dll`** | **必须一起分发！** 见下方"封装坑"，漏了它 exe 会以 `0xC0000135` 秒退 |
+| `启动桌宠.bat` | 双击启动：检查重复实例 → 按需拉起桥接 → 启动桌宠 |
+| `V1-BASELINE.md` | 本文档 |
+| `tools\pet_bridge.mjs` | 桥接：`/usage`（余额）`/lines`（台词库） |
+| `tools\usage.mjs` | 用量采集（ccswitch / dsh / deepseek） |
+
+### ⚠️ 封装坑（本次踩到，务必保留）：`WebView2Loader.dll`
+
+只拷 exe 会导致**双击后无任何提示地秒退，退出码 `0xC0000135`(STATUS_DLL_NOT_FOUND)**。
+排查方式（不要靠猜）：
+
+```powershell
+& "$env:USERPROFILE\.mingw64\mingw64\bin\objdump.exe" -p presage-pet.exe |
+  Select-String "DLL Name"      # 看真实导入表，找非系统 DLL
+```
+
+导入表里只有 `WebView2Loader.dll` 是需要随包分发的（其余都是系统 DLL）。
+它的位置：`app\src-tauri\target\release\WebView2Loader.dll`。
+
+> 补充：`target-feature=+crt-static` **不能**去掉 MinGW 运行时依赖（`libgcc_s` 是独立
+> unwinder），本项目实测无效；好在导入表里本来也没有它，无需处理。
+
+**v1 实测功能检查（全绿）**：
+
+```
+桥接 /health            ok:true
+/usage                  ccswitch[ok]  dsh[ok] tokens=357,121,583
+                        deepseek[ok] 余额 ¥51.1  近24h ¥3.88
+桌宠（PATH 无 MinGW）   存活 · 36.6 MB · source=live · boot ok states=12 eggs=5
+                        命中遮罩 hitmask 780/4096 · 点击穿透 → 穿透 ✓
+设置独立窗口            已创建 → 切换视图 → 对话框已打开 → 设置页已刷新
+托盘                    ✗ 见问题 1（环境级 ACCESS_DENIED，与缺 DLL 无关）
+```
+
+
+---
+
+## 1. 怎么跑 / 怎么建
+
+```powershell
+# 前端（含素材打包进 dist，做语法门禁）
+python tools\build_web.py
+
+# 原生壳（MinGW 工具链）
+$env:Path = "$env:USERPROFILE\.mingw64\mingw64\bin;$env:USERPROFILE\.cargo\bin;" + $env:Path
+cd app\src-tauri; cargo build
+
+# 测试（112 项，全绿）
+node app\test\logic.test.mjs        # 43
+node app\test\codex.test.mjs        # 19
+node app\test\interactions.test.mjs # 11
+node app\test\dsh.test.mjs          # 13
+node app\test\lines.test.mjs        # 13
+node app\test\usage-view.test.mjs   # 13
+```
+
+**启动注意（踩过）**：桌宠是常驻 GUI 进程，用脚本启动时**必须重定向 stdout/stderr**，
+否则子进程一直持有继承的管道句柄，启动命令会永远等不到结束（表现为"卡住"）。
+
+```powershell
+Start-Process -FilePath $exe -RedirectStandardOutput "runtime\pet.out.log" `
+              -RedirectStandardError "runtime\pet.err.log"
+```
+
+---
+
+## 2. 已验证可用（v1 的功能清单）
+
+| 功能 | 验证方式与证据 |
+|---|---|
+| 精灵图桌宠窗口（透明、无边框、置顶） | `boot ok states=12 eggs=5 tauri=true` |
+| **点击穿透** `WS_EX_TRANSPARENT \| WS_EX_LAYERED` | `WindowFromPoint` 三点探测均为"穿透到下层" |
+| 命中遮罩（JS 算 64×64 网格，Rust 每 16ms 轮询光标） | 日志 `[hitmask] filled=…` / `[cursor] hit=…` |
+| 状态随真实 DSH 会话变化（零安装轮询投影缓存） | `[config] source=live`，`state → working/thinking` 跟随 |
+| Codex 感知（tail rollout + 15 分钟新鲜度过滤） | `监视中的 Codex 会话=0`（历史会话不再误触发） |
+| 长任务稳定保持 `working`（心跳判据） | 3 条新测试：心跳在→3 分钟不衰减；心跳停→80s 回落；有工具在跑→不打瞌睡 |
+| 气泡排队（最新优先 + 20s TTL + 上限 1 条） | 点击台词不再卡住，新台词顶掉旧的 |
+| 靠边吸附 + 三向探头 | 实测 `left=0 / right=0 / bottom=0` 判定正确；三个边缘自检全通过 |
+| 外观设置（大小 80–480 / 透明度 / 置顶 / 穿透） | 设置窗口改 → Rust 转发给桌宠窗口生效（不再调设置页自己） |
+| 设置独立窗口（普通可拖动窗口，内容可滚动） | 实拍：标题栏 + 账本卡片 + 滚动条 + 完整分区 |
+| 余额：官方 API + 余额差额 | `DeepSeek 余额 ¥52.49，近 24h 消耗 ¥2.49（50 次采样）` |
+| 台词库可视化编辑（9 类，含用量播报） | 设置页可增删，写入 `runtime/events/lines.json` |
+| **无控制台黑框** | `#![windows_subsystem = "windows"]`（main.rs:20） |
+
+---
+
+## 3. 未解决的问题（下次从这里开始）
+
+### 🔴 问题 1：托盘图标不显示（唯一阻塞项）
+
+**现象**：进程正常、窗口正常，但任务栏右下角（含 `^` 隐藏区）始终没有图标。
+**证据链**（全部实测）：
+
+```
+[tray] 用 exe 图标资源 id=32512
+[tray] 图标句柄来源=exe 资源 有效=true
+[tray] diag windowstation=WinSta0 desktop=Default     ← 与 Explorer 一致，排除窗口站假设
+[tray] diag NIM_ADD without-icon ok=0 err=5            ← 连"不带图标"的最小注册也被拒
+[tray] Shell_NotifyIcon 第 1..5 次失败，GetLastError=5  ← 5 = ACCESS_DENIED
+```
+
+已排除的假设：
+1. ~~图标句柄无效~~ —— 用 exe 自带资源（id=**32512**，不是常规的 1），句柄有效
+2. ~~图标尺寸不对~~ —— 512 / 128 / 32 都试过
+3. ~~结构体尺寸不对~~ —— `cbSize=976`，且用不带图标的最小结构同样被拒
+4. ~~残留错误码~~ —— 调用前已 `SetLastError(0)`
+5. ~~窗口站/桌面不对~~ —— `WinSta0\Default`
+6. ~~Tauri 封装的问题~~ —— 换成原生 `Shell_NotifyIconW` 同样失败（Tauri 那个是**静默**失败）
+7. ~~权限令牌~~ —— **用户自己双击 exe 也是 `err=5`**
+
+**结论**：`Shell_NotifyIcon` 在这台机器上对任何来源的调用都返回 `ACCESS_DENIED`，
+属于**环境级拒绝**（安全软件 / 组策略 / 通知区策略），不是本项目代码的问题。
+
+**已排除"缺 DLL 导致托盘失败"这一猜测**：v1 包补齐 `WebView2Loader.dll` 后，
+同一进程完整运行（`source=live`、12 状态、穿透正常），托盘日志依旧 `err=5` —— 两者无关。
+
+**相关代码行**：
+- `app/src-tauri/src/main.rs:40-290` —— `mod native_tray`（原生实现 + 全部诊断日志）
+- `app/src-tauri/src/main.rs:130` —— `pub fn install()`：建隐藏窗口 + `NIM_ADD` 重试 5 次
+- `app/src-tauri/src/main.rs:274` —— 五次失败后的结论日志
+- `app/src-tauri/src/main.rs:401` —— `fn setup_tray()`：Tauri 版托盘（非 Windows 平台的兜底）
+
+**下次的下一步（按性价比排序）**：
+1. 写一个 **30 行独立的最小 exe**（只用 `Shell_NotifyIcon`，不带 Tauri）在同一台机器跑 —— 若它也 `err=5`，即可 100% 确认环境问题并停止在本项目里找原因
+2. 检查安全软件 / 组策略：`gpedit.msc` → 用户配置 → 管理模板 → 开始菜单和任务栏；以及第三方安全套件的"托盘保护"
+3. 查 `HKCU\Control Panel\NotifyIconSettings` 与该 exe 路径相关的键值
+4. 换一个 Windows 账户（新建本地账户）试同一 exe —— 若正常则是当前账户的策略
+5. 兜底方案：既然托盘不可用，就把**桌宠右键菜单**作为唯一入口（已可用），并在 exe 上加桌面快捷方式说明
+
+### 🟡 问题 2：抠图残留（手臂与身体之间的浅灰缝）
+
+**现象**：某些帧角色左右两侧有未扣净的浅灰竖条，且**逐帧闪烁**。
+**根因**：该缝隙是"被角色围住的白色背景"，flood fill 从画布边界到不了。
+**为什么没硬修**：试过两种自动判据，都不可靠 ——
+- 按连通块中位亮度判 → 白嘴与缝隙连成一块时**把嘴一起抠掉**
+- 按逐像素亮度判 → 领结/高光抗锯齿边缘被**咬出麻点**
+根因是视频压缩后背景浅灰(≈244)与白色特征(≈251)像素分布重叠，颜色上分不干净。
+
+**相关代码行**：
+- `tools/build_sprites.py:225` —— `def key_white()`：全部抠图逻辑与决策注释
+- `tools/build_sprites.py:262-276` —— 反走样带处理 + `pocket_px` 占位（此处是"口袋清理"的回退点）
+
+**下次的下一步**：**从源素材解决** —— 导出带 alpha 的 webm/png 序列，或用纯色幕布（如纯绿 #00FF00）。
+这样抠图零误差，灰条/边界毛边/探头裁切会一起消失。
+
+### 🟡 问题 3：任务栏图标（`skipTaskbar` 无效）
+
+**现象**：窗口仍出现在任务栏（虽然窗口本身无边框）。
+**相关代码行**：`app/src-tauri/src/main.rs:806` —— `let _ = w.set_skip_taskbar(true);`
+**下次的下一步**：直接设扩展样式 `WS_EX_TOOLWINDOW`（清 `WS_EX_APPWINDOW`）。
+链接期警告 `.rsrc merge failure: multiple non-default manifests` 与此无关，不影响运行。
+
+### 🟢 问题 4：`celebrate` 用难过脸弹跳
+
+需要一个笑脸立绘。文件名带 `happy` / `开心` / `笑` / `smile` 就会被管线自动识别。
+
+---
+
+## 4. 关键文件地图
+
+| 文件 | 职责 |
+|---|---|
+| `app/src/main.js` | 启动、外观、贴边吸附/探头、自检、跨窗口转发 |
+| `app/src/arbiter.js` | 状态仲裁（心跳感知的新鲜度衰减、瞌睡判定） |
+| `app/src/pointer.js` | 命中遮罩、点击穿透、拖动、位置记忆 |
+| `app/src/renderer.js` | 精灵图播放、提拉形变、呼吸缩放 |
+| `app/src/settings.js` | 设置面板（惰性查找元素，跨窗口改外观） |
+| `app/src-tauri/src/main.rs` | 原生壳：托盘、窗口、穿透样式、日志 |
+| `tools/build_sprites.py` | 素材管线（抠图/裁切/合成精灵图） |
+| `tools/pet_bridge.mjs` | 桥接：/usage /lines，DSH+Codex 感知 |
+| `tools/check_alpha.py` | 抠图质量审计（逐状态逐帧） |
+
+---
+
+## 5. 这次踩过的坑（写下来免得重犯）
+
+1. **`<dialog>` 的 `display:none` 会被 `#settings{display:flex}` 覆盖** —— 关闭的面板一直显示（症状：桌宠旁边总跟着一块"设置"头部）。要写 `#settings[open]`。
+2. **元素查询必须惰性** —— `<dialog>` 在 `<script type="module">` 之后，模块执行时 `getElementById` 返回 null，症状是"点了没反应、也不报错"。
+3. **`run_on_main_thread` 是阻塞发送** —— 在 IPC 处理线程里调用会与主线程互等死锁，前端 Promise 既不 resolve 也不 reject。要从旁路线程发起。
+4. **`WebviewUrl::App("index.html?view=settings")`** —— Tauri 把整串当文件路径，页面加载失败变成白屏。改用 eval 切换视图。
+5. **`println!` 在 GUI 子系统下会 panic**（没有 stdout）—— 必须用 `writeln!` 并忽略错误。
+6. **`.bat` 必须 CRLF + 与代码页一致的编码**（GBK 存就用默认代码页，别 `chcp 65001`）。
+7. **`GetLastError` 必须先 `SetLastError(0)`** 才可信。
+8. **exe 的图标资源 id 不一定是 1** —— 这台机器上是 32512。
+9. **启动常驻进程必须重定向输出**，否则命令挂住（第一节已说明）。

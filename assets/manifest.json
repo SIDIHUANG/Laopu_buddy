@@ -1,0 +1,541 @@
+{
+  "cell": 256,
+  "margin": 0.04,
+  "anchor_mode": "frame",
+  "anchor": "bottom-center",
+  "states": {
+    "idle": {
+      "file": "states/idle.png",
+      "kind": "video",
+      "mode": "pingpong",
+      "source": "main待机.mp4",
+      "frames": 32,
+      "fps": 12,
+      "duration_s": 2.67,
+      "span": [
+        0.0,
+        1.0
+      ],
+      "desc": "待机：两个 Agent 都空闲（上下浮动）",
+      "loopFrom": null,
+      "tail": null,
+      "strip_size": [
+        8192,
+        256
+      ],
+      "src_frame_size": [
+        720,
+        720
+      ],
+      "crop": null,
+      "anchor_mode": "frame",
+      "scale": 0.32711,
+      "tweak": 1.0,
+      "on_screen_px": [
+        212,
+        217
+      ],
+      "content_median": [
+        648,
+        664
+      ],
+      "watermark_px_removed": 701344,
+      "bbox_std_pct": [
+        0.07,
+        1.01
+      ],
+      "endpoint_diff": 1.506,
+      "loop_seam_diff": 0.0
+    },
+    "thinking": {
+      "file": "states/thinking.png",
+      "kind": "video",
+      "mode": "pingpong",
+      "source": "curious转头.mp4",
+      "frames": 40,
+      "fps": 12,
+      "duration_s": 3.33,
+      "span": [
+        0.0,
+        1.0
+      ],
+      "desc": "思考中：回合已开始、未出工具调用（左右摇头）",
+      "loopFrom": null,
+      "tail": null,
+      "strip_size": [
+        10240,
+        256
+      ],
+      "src_frame_size": [
+        720,
+        720
+      ],
+      "crop": null,
+      "anchor_mode": "frame",
+      "scale": 0.32711,
+      "tweak": 1.0,
+      "on_screen_px": [
+        212,
+        212
+      ],
+      "content_median": [
+        648,
+        648
+      ],
+      "watermark_px_removed": 876680,
+      "bbox_std_pct": [
+        0.35,
+        2.15
+      ],
+      "endpoint_diff": 23.601,
+      "loop_seam_diff": 0.0
+    },
+    "working": {
+      "file": "states/working.png",
+      "kind": "video",
+      "mode": "once_loop",
+      "source": [
+        "工作中的视频_main",
+        "work",
+        "工作",
+        "键盘"
+      ],
+      "frames": 100,
+      "fps": 12,
+      "duration_s": 8.33,
+      "span": [
+        0.0,
+        0.36
+      ],
+      "desc": "工作中：拿出电脑 → 开始打字（一次性动作 + 尾部循环）",
+      "loopFrom": 44,
+      "tail": {
+        "span": [
+          0.4,
+          0.86
+        ],
+        "frames": 56
+      },
+      "strip_size": [
+        25600,
+        256
+      ],
+      "src_frame_size": [
+        720,
+        720
+      ],
+      "crop": null,
+      "anchor_mode": "frame",
+      "scale": 0.32711,
+      "tweak": 1.0,
+      "on_screen_px": [
+        213,
+        218
+      ],
+      "content_median": [
+        651,
+        665
+      ],
+      "watermark_px_removed": 2186514,
+      "bbox_std_pct": [
+        0.45,
+        3.17
+      ],
+      "endpoint_diff": 2.966,
+      "loop_seam_diff": 2.966
+    },
+    "waiting": {
+      "file": "states/waiting.png",
+      "kind": "still",
+      "mode": "loop",
+      "source": "waiting.png",
+      "frames": 20,
+      "fps": 12,
+      "duration_s": 1.67,
+      "span": null,
+      "desc": "等待输入或审批（最高优先级）",
+      "loopFrom": null,
+      "tail": null,
+      "strip_size": [
+        5120,
+        256
+      ],
+      "src_frame_size": [
+        1568,
+        1632
+      ],
+      "crop": null,
+      "anchor_mode": "frame",
+      "scale": 0.14431,
+      "tweak": 1.0,
+      "on_screen_px": [
+        210,
+        198
+      ],
+      "content_median": [
+        1455,
+        1373
+      ],
+      "watermark_px_removed": 107859,
+      "bbox_std_pct": [
+        0.0,
+        0.0
+      ],
+      "endpoint_diff": 0.0,
+      "loop_seam_diff": 0.0
+    },
+    "error": {
+      "file": "states/error.png",
+      "kind": "still",
+      "mode": "loop",
+      "source": "sad.png",
+      "frames": 20,
+      "fps": 12,
+      "duration_s": 1.67,
+      "span": null,
+      "desc": "出错 / 失败",
+      "loopFrom": null,
+      "tail": null,
+      "strip_size": [
+        5120,
+        256
+      ],
+      "src_frame_size": [
+        1568,
+        1632
+      ],
+      "crop": null,
+      "anchor_mode": "frame",
+      "scale": 0.14431,
+      "tweak": 1.0,
+      "on_screen_px": [
+        213,
+        216
+      ],
+      "content_median": [
+        1473,
+        1496
+      ],
+      "watermark_px_removed": 107092,
+      "bbox_std_pct": [
+        0.0,
+        0.0
+      ],
+      "endpoint_diff": 0.0,
+      "loop_seam_diff": 0.0
+    },
+    "celebrate": {
+      "file": "states/celebrate.png",
+      "kind": "proc",
+      "mode": "once",
+      "source": "main.png",
+      "frames": 16,
+      "fps": 12,
+      "duration_s": 1.33,
+      "span": null,
+      "desc": "完成庆祝：弹跳 + squash，播完停住",
+      "loopFrom": null,
+      "tail": null,
+      "strip_size": [
+        4096,
+        256
+      ],
+      "src_frame_size": [
+        1440,
+        1504
+      ],
+      "crop": null,
+      "anchor_mode": "frame",
+      "scale": 0.1566,
+      "tweak": 1.0,
+      "on_screen_px": [
+        211,
+        216
+      ],
+      "content_median": [
+        1349,
+        1381
+      ],
+      "watermark_px_removed": 91363,
+      "bbox_std_pct": [
+        0.0,
+        0.0
+      ],
+      "endpoint_diff": 0.0,
+      "loop_seam_diff": 0.0
+    },
+    "doze": {
+      "file": "states/doze.png",
+      "kind": "video",
+      "mode": "once",
+      "source": "sleep长时间待机.mp4",
+      "frames": 60,
+      "fps": 12,
+      "duration_s": 5.0,
+      "span": [
+        0.0,
+        1.0
+      ],
+      "desc": "进入休眠：站立 → 趴下 → 闭眼（一次性过渡）",
+      "loopFrom": null,
+      "tail": null,
+      "strip_size": [
+        15360,
+        256
+      ],
+      "src_frame_size": [
+        720,
+        720
+      ],
+      "crop": null,
+      "anchor_mode": "frame",
+      "scale": 0.32711,
+      "tweak": 1.0,
+      "on_screen_px": [
+        212,
+        217
+      ],
+      "content_median": [
+        648,
+        664
+      ],
+      "watermark_px_removed": 1315020,
+      "bbox_std_pct": [
+        1.61,
+        3.36
+      ],
+      "endpoint_diff": 37.717,
+      "loop_seam_diff": 0.0
+    },
+    "sleep": {
+      "file": "states/sleep.png",
+      "kind": "video",
+      "mode": "pingpong",
+      "source": "sleep长时间待机.mp4",
+      "frames": 20,
+      "fps": 10,
+      "duration_s": 2.0,
+      "span": [
+        0.78,
+        1.0
+      ],
+      "desc": "熟睡：躺着打呼，Zzz 飘动（循环）",
+      "loopFrom": null,
+      "tail": null,
+      "strip_size": [
+        5120,
+        256
+      ],
+      "src_frame_size": [
+        720,
+        720
+      ],
+      "crop": null,
+      "anchor_mode": "frame",
+      "scale": 0.2944,
+      "tweak": 0.9,
+      "on_screen_px": [
+        198,
+        185
+      ],
+      "content_median": [
+        672,
+        627
+      ],
+      "watermark_px_removed": 438340,
+      "bbox_std_pct": [
+        0.0,
+        2.02
+      ],
+      "endpoint_diff": 3.44,
+      "loop_seam_diff": 0.0
+    },
+    "sleep_idle": {
+      "file": "states/sleep_idle.png",
+      "kind": "still",
+      "mode": "loop",
+      "source": "sleep.png",
+      "frames": 16,
+      "fps": 12,
+      "duration_s": 1.33,
+      "span": null,
+      "desc": "静态睡姿（备选，若不需要熟睡循环可用它）",
+      "loopFrom": null,
+      "tail": null,
+      "strip_size": [
+        4096,
+        256
+      ],
+      "src_frame_size": [
+        1568,
+        1632
+      ],
+      "crop": null,
+      "anchor_mode": "frame",
+      "scale": 0.11834,
+      "tweak": 0.82,
+      "on_screen_px": [
+        180,
+        148
+      ],
+      "content_median": [
+        1518,
+        1254
+      ],
+      "watermark_px_removed": 107859,
+      "bbox_std_pct": [
+        0.0,
+        0.0
+      ],
+      "endpoint_diff": 0.0,
+      "loop_seam_diff": 0.0
+    },
+    "peek": {
+      "file": "states/peek.png",
+      "kind": "video",
+      "mode": "once",
+      "source": [
+        "探头",
+        "peek"
+      ],
+      "frames": 60,
+      "fps": 12,
+      "duration_s": 5.0,
+      "span": [
+        0.0,
+        1.0
+      ],
+      "desc": "探头：从底部边框后探出来看一眼再缩回去（特殊边框互动）",
+      "loopFrom": null,
+      "tail": null,
+      "strip_size": [
+        15360,
+        256
+      ],
+      "src_frame_size": [
+        1280,
+        720
+      ],
+      "crop": [
+        332,
+        0,
+        972,
+        720
+      ],
+      "anchor_mode": "stabilize",
+      "scale": 0.33075,
+      "tweak": 0.91,
+      "on_screen_px": [
+        212,
+        214
+      ],
+      "content_median": [
+        640,
+        648
+      ],
+      "watermark_px_removed": 1844946,
+      "bbox_std_pct": [
+        36.33,
+        26.28
+      ],
+      "endpoint_diff": 3.239,
+      "loop_seam_diff": 0.0
+    },
+    "peek_right": {
+      "file": "states/peek_right.png",
+      "kind": "video",
+      "mode": "once",
+      "source": "右侧边框附件探头",
+      "frames": 60,
+      "fps": 12,
+      "duration_s": 5.0,
+      "span": [
+        0.0,
+        1.0
+      ],
+      "desc": "右侧探头：从右侧边框滑入看一眼再滑出",
+      "loopFrom": null,
+      "tail": null,
+      "strip_size": [
+        15360,
+        256
+      ],
+      "src_frame_size": [
+        1280,
+        720
+      ],
+      "crop": [
+        204,
+        14,
+        742,
+        720
+      ],
+      "anchor_mode": "stabilize",
+      "scale": 0.31752,
+      "tweak": 0.91,
+      "on_screen_px": [
+        169,
+        214
+      ],
+      "content_median": [
+        531,
+        675
+      ],
+      "watermark_px_removed": 1844946,
+      "bbox_std_pct": [
+        26.87,
+        16.48
+      ],
+      "endpoint_diff": 3.239,
+      "loop_seam_diff": 0.0
+    },
+    "peek_left": {
+      "file": "states/peek_left.png",
+      "kind": "video",
+      "mode": "once",
+      "source": "右侧边框附件探头",
+      "frames": 60,
+      "fps": 12,
+      "duration_s": 5.0,
+      "span": [
+        0.0,
+        1.0
+      ],
+      "desc": "左侧探头：右侧素材水平镜像，不额外占素材",
+      "loopFrom": null,
+      "tail": null,
+      "strip_size": [
+        15360,
+        256
+      ],
+      "src_frame_size": [
+        1280,
+        720
+      ],
+      "crop": [
+        204,
+        14,
+        742,
+        720
+      ],
+      "anchor_mode": "stabilize",
+      "scale": 0.31752,
+      "tweak": 0.91,
+      "on_screen_px": [
+        167,
+        214
+      ],
+      "content_median": [
+        527,
+        675
+      ],
+      "watermark_px_removed": 1844946,
+      "bbox_std_pct": [
+        26.92,
+        16.49
+      ],
+      "endpoint_diff": 3.239,
+      "loop_seam_diff": 0.0
+    }
+  }
+}

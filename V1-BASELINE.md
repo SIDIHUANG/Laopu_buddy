@@ -171,7 +171,33 @@ Start-Process -FilePath $exe -RedirectStandardOutput "runtime\pet.out.log" `
 4. 换一个 Windows 账户（新建本地账户）试同一 exe —— 若正常则是当前账户的策略
 5. 兜底方案：既然托盘不可用，就把**桌宠右键菜单**作为唯一入口（已可用），并在 exe 上加桌面快捷方式说明
 
-### 🟡 问题 2：抠图残留（手臂与身体之间的浅灰缝）
+### 🔴 问题 2：桌宠先出现、随后画面消失，只剩「+n 条」文字（**仅在用户环境**）
+
+**现象**（用户实测）：双击 `启动桌宠.bat` → 她出现 → **随后消失** ✗，桌面上只剩「+n 条」悬浮文字；
+任务管理器里进程仍在 ✓。用户补充：「**你用命令启动就正常，我点 bat 就不行，还有红条**」。
+
+**当前掌握的证据**：
+- 在开发机上**无法复现** ✗：用同样的 `v1\presage-pet.exe` + 同样的 `v1\runtime\webview2` profile
+  + 同样的工作目录，`PrintWindow` 抓到的画面是完整的（她 + 气泡 + 计数）✓
+- 用 `cmd /c 启动桌宠.bat` 复现时也**正常**：`boot ok states=12` ✓、`hitmask filled=505` ✓、
+  `pet.err.log` 为空 ✓ → **画布确实有内容** ✓
+- 说明差异在**用户侧的运行条件**，而不是 bat 逻辑或代码路径 ✗
+
+**最可能的原因（按可能性排序）**：
+1. **WebView2 的 GPU 合成**：透明窗口 + 硬件加速在部分显卡/驱动上会「先画出来、随后画布不再合成、
+   只剩 DOM 文字」—— 与「她消失、+n 条还在」的现象**高度吻合** ✓
+   → 已备好一键验证：**`v1\诊断-关GPU启动.bat`**（设 `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--disable-gpu …`）
+   → 若该启动器下她稳定显示，就把参数写进 `tauri.conf.json` 的 `windows[].additionalBrowserArgs`
+2. **多显示器 / DPI 变化**导致的合成失效（用户的显示缩放 200%）
+3. 第三方安全软件拦截了 WebView2 的 GPU 进程
+
+**「红条」是什么**：尚未确认 ✗。用户第一张 bat 截图里控制台右上出现过红色矩形
+（怀疑是控制台窗口的局部重绘残影，或 `timeout` 报错那一瞬的画面）。
+**下次请用户直接截图**，这是最快的判据。
+
+**需要的证据（用户双击一次 bat 即可，新版已自带诊断输出）**：屏幕上的 `[1]`~`[5]` 整段。
+
+### 🟡 问题 3：抠图残留（手臂与身体之间的浅灰缝）
 
 **现象**：某些帧角色左右两侧有未扣净的浅灰竖条，且**逐帧闪烁**。
 **根因**：该缝隙是"被角色围住的白色背景"，flood fill 从画布边界到不了。
@@ -187,14 +213,14 @@ Start-Process -FilePath $exe -RedirectStandardOutput "runtime\pet.out.log" `
 **下次的下一步**：**从源素材解决** —— 导出带 alpha 的 webm/png 序列，或用纯色幕布（如纯绿 #00FF00）。
 这样抠图零误差，灰条/边界毛边/探头裁切会一起消失。
 
-### 🟡 问题 3：任务栏图标（`skipTaskbar` 无效）
+### 🟡 问题 4：任务栏图标（`skipTaskbar` 无效）
 
 **现象**：窗口仍出现在任务栏（虽然窗口本身无边框）。
 **相关代码行**：`app/src-tauri/src/main.rs:806` —— `let _ = w.set_skip_taskbar(true);`
 **下次的下一步**：直接设扩展样式 `WS_EX_TOOLWINDOW`（清 `WS_EX_APPWINDOW`）。
 链接期警告 `.rsrc merge failure: multiple non-default manifests` 与此无关，不影响运行。
 
-### 🟢 问题 4：`celebrate` 用难过脸弹跳
+### 🟢 问题 5：`celebrate` 用难过脸弹跳
 
 需要一个笑脸立绘。文件名带 `happy` / `开心` / `笑` / `smile` 就会被管线自动识别。
 
@@ -227,3 +253,13 @@ Start-Process -FilePath $exe -RedirectStandardOutput "runtime\pet.out.log" `
 7. **`GetLastError` 必须先 `SetLastError(0)`** 才可信。
 8. **exe 的图标资源 id 不一定是 1** —— 这台机器上是 32512。
 9. **启动常驻进程必须重定向输出**，否则命令挂住（第一节已说明）。
+10. **`.bat` 里不要用 `timeout /t`** —— 它在 **stdin 被重定向**时（计划任务、某些启动器、
+    隐藏窗口运行）会打印「不支持输入重新定向，立即退出此进程」并**中断整个批处理** ✗。
+    实测踩到 ✓。改用 `ping -n <秒> 127.0.0.1 > nul` ✓（任何上下文都稳）。
+11. **日志是 UTF-8、cmd 控制台是 GBK** —— `findstr` / `type` 直出日志会**中文花屏** ✗
+    （用户根本没法把报错发给你 ✓）。做法：先 `Get-Content -Encoding UTF8 … | Set-Content -Encoding Default …`
+    转一份 GBK 副本 ✓，再打印 ✓。
+12. **验证 release 版不能只看日志** —— 我上次只确认了 `boot ok` / `hitmask filled` ✓ 就收工，
+    漏掉了「画面到底画出来没有」✗。**凡是涉及"看得见"的功能，必须抓图或肉眼看** ✓。
+13. **「我用命令启动正常、你点 bat 不行」这类差异，第一件事是按用户的方式复现** ——
+    直接 `cmd /c 启动桌宠.bat` ✓，而不是用 `Start-Process exe` 模拟 ✗（两者环境并不等价 ✓）。

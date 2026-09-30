@@ -30,7 +30,7 @@ const LIFT = {
 const HEADROOM = 0.34;
 
 export class PetRenderer {
-  constructor(canvas, lib, { size = 200 } = {}) {
+  constructor(canvas, lib, { size = 200, view = null } = {}) {
     this.canvas = canvas;
     // willReadFrequently：指针遮罩要不断 getImageData 读 alpha，
     // 不开这个每次都会从 GPU 回读，白白浪费。
@@ -38,6 +38,16 @@ export class PetRenderer {
     this.lib = lib;
     this.size = size;
     this.state = null;
+    /**
+     * 可见角色的渲染目标：两层 DOM（{prev, cur}），用背景图逐帧画。
+     *
+     * 为什么不用 canvas 显示：用户机器上 canvas 的像素是对的
+     * （命中遮罩 filled 非 0），但整个 canvas 图层不被合成 ✗，
+     * 而 DOM/PNG 一直正常 ✓。所以 canvas 退居"命中遮罩专用离屏位图"，
+     * 可见部分交给 DOM，走和气泡皮肤同一条渲染路径。
+     */
+    this.view = view;
+    this._domUrl = null;
     this.epoch = -1;
     this.tick = 0;
     this.acc = 0;
@@ -83,6 +93,21 @@ export class PetRenderer {
     this.prev.width = this.canvas.width;
     this.prev.height = this.canvas.height;
     this.applyBaseTransform();
+    this.layoutDom();
+  }
+
+  /** 把两层 DOM 精灵对齐到画布的盒子（贴底，留出上方提拉空间） */
+  layoutDom() {
+    if (!this.view) return;
+    const left = this.canvas.offsetLeft;
+    const top = this.canvas.offsetTop + (this.height - this.size);
+    for (const el of [this.view.prev, this.view.cur]) {
+      if (!el) continue;
+      el.style.left = `${left}px`;
+      el.style.top = `${top}px`;
+      el.style.width = `${this.size}px`;
+      el.style.height = `${this.size}px`;
+    }
   }
 
   applyBaseTransform() {
@@ -113,6 +138,63 @@ export class PetRenderer {
     this.prevCtx.setTransform(1, 0, 0, 1, 0, 0);
     this.prevCtx.clearRect(0, 0, this.prev.width, this.prev.height);
     this.prevCtx.drawImage(this.canvas, 0, 0);
+    this.snapshotPreviousDom();
+  }
+
+  /** DOM 版的快照：把当前可见层的图与形变抄到 prev 层，让它淡出 */
+  snapshotPreviousDom() {
+    if (!this.view || !this.view.cur || !this.view.prev) return;
+    const c = this.view.cur;
+    const p = this.view.prev;
+    if (!c.style.backgroundImage) return; // 还没画过任何一帧
+    p.style.backgroundImage = c.style.backgroundImage;
+    p.style.backgroundSize = c.style.backgroundSize;
+    p.style.backgroundPosition = c.style.backgroundPosition;
+    p.style.transform = c.style.transform;
+    p.style.opacity = '1';
+  }
+
+  /**
+   * 用 DOM 背景图画出第 idx 帧（这是**真正可见**的那个角色）。
+   *
+   * 关键点：不依赖精灵图库的加载状态 —— 直接把 url 交给浏览器，
+   * 浏览器自己会取图并显示，比 canvas 那条链路少一个失败点。
+   */
+  paintDom(idx) {
+    if (!this.view || !this.view.cur) return;
+    const info = this.lib.info(this.state);
+    if (!info) return;
+    const cur = this.view.cur;
+    const url = this.lib.base + info.file;
+    if (this._domUrl !== url) {
+      cur.style.backgroundImage = `url("${url}")`;
+      this._domUrl = url;
+    }
+    const s = this.size;
+    const frames = Math.max(1, info.frames | 0);
+    cur.style.backgroundSize = `${frames * s}px ${s}px`;
+    cur.style.backgroundPosition = `-${(((idx % frames) + frames) % frames) * s}px 0`;
+    cur.style.transform = this.domTransform();
+    // 交叉淡化：新画面淡入、旧画面淡出（用内联 opacity 逐帧推进，
+    // 不依赖 CSS transition —— 少一个合成器特性就少一个失败点）
+    const f = Math.min(1, Math.max(0, this.fade));
+    cur.style.opacity = String(f);
+    if (this.view.prev) {
+      this.view.prev.style.opacity = String(1 - f);
+    }
+  }
+
+  /** 与 canvas 版等价的提拉形变（支点在底部中心） */
+  domTransform() {
+    const l = Math.max(0, this.lift);
+    const sway = Math.sin((this.elapsed || 0) / 1000 * LIFT.swayHz * Math.PI * 2)
+      * LIFT.swayDeg * l;
+    const sy = 1 + LIFT.stretchY * l;
+    const sx = 1 - LIFT.squashX * l;
+    const rot = (LIFT.tiltDeg + sway) * l;
+    const dy = -this.size * LIFT.liftY * l;
+    return `translateY(${dy.toFixed(2)}px) rotate(${rot.toFixed(2)}deg)`
+      + ` scale(${sx.toFixed(4)}, ${sy.toFixed(4)})`;
   }
 
   /** 拖拽时调用：进入/退出「被拎起来」的形变 */
@@ -178,6 +260,9 @@ export class PetRenderer {
         -this.size / 2, -this.size, this.size, this.size);
       ctx.restore();
     }
+
+    // 可见角色：DOM 背景图（canvas 只用于命中遮罩）
+    this.paintDom(idx);
 
     // 上一状态淡出（叠在新画面上，形成交叉淡化）
     if (this.fade < 1) {

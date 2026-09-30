@@ -82,7 +82,14 @@ async function boot() {
   const arbiter = new Arbiter({ lock: 'auto' });
 
   const canvas = document.getElementById('pet-canvas');
-  const renderer = new PetRenderer(canvas, lib, { size: 200 });
+  const renderer = new PetRenderer(canvas, lib, {
+    size: 200,
+    // 可见角色由这两层 DOM 渲染（canvas 只留着算命中遮罩）
+    view: {
+      prev: document.getElementById('pet-prev'),
+      cur: document.getElementById('pet-cur'),
+    },
+  });
 
   const list = document.getElementById('bubble-list');
   const bubbles = new BubbleQueue({ onChange: renderBubbles });

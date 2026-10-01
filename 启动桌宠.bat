@@ -149,14 +149,25 @@ if not defined BRIDGE (
   echo [i] 没找到 tools\pet_bridge.mjs，跳过桥接
   goto after_bridge
 )
+rem 桥接的 stdout/stderr **必须重定向到文件**：
+rem   1) 否则它写到启动器那个控制台，控制台一关，node 写 stdout 失败就可能退出
+rem      （用户实测：桥接死了，而桌宠那边只表现为"一直不进入 working、零事件"）；
+rem   2) 出问题时我们才有东西可看 —— v1.1 之前它写控制台，日志里只有
+rem      上一次留下的 9MB 刷屏，根本查不出它为什么死。
+rem 启动后再用 /health 确认一次，把结论写进日志，而不是靠 netstat 猜。
+set "BLOG=%LOGDIR%\bridge.log"
 netstat -ano | findstr /r /c:"127.0.0.1:8792 .*LISTENING" > nul
-if errorlevel 1 (
-  echo [i] 启动桥接（余额 / 台词库）...
-  start "presage-bridge" /min /d "%PETDIR%" "%NODE%" "%BRIDGE%" --out "%LOGDIR%\events" --port 8792
-  ping -n 3 127.0.0.1 > nul
-) else (
+if not errorlevel 1 (
   echo [i] 桥接已在运行
+  goto after_bridge
 )
+echo [i] 启动桥接（余额 / 台词库）...
+rem 先清掉上一轮的日志，避免新旧混在一起
+del /q "%BLOG%" >nul 2>nul
+start "presage-bridge" /min /d "%PETDIR%" cmd /c ""%NODE%" "%BRIDGE%" --out "%LOGDIR%\events" --port 8792 >> "%BLOG%" 2>&1"
+ping -n 4 127.0.0.1 > nul
+powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+  "try { $r = Invoke-WebRequest 'http://127.0.0.1:8792/health' -UseBasicParsing -TimeoutSec 4; $j = $r.Content | ConvertFrom-Json; Write-Host ('[i] 桥接就绪 ok=' + $j.ok + ' DSH 会话=' + $j.dsh.sessions + ' 已产事件=' + $j.produced) } catch { Write-Host '[x] 桥接没有起来（/health 无响应）—— 详见 runtime\bridge.log' }" 2>nul
 :after_bridge
 
 rem ---------------------------------------------------------------------------
@@ -229,6 +240,10 @@ findstr /c:"source=" /c:"boot ok" /c:"BOOT-FAILED" /c:"REJECT" /c:"外观 " /c:"提
 echo.
 echo [4] 几何 / 素材 / 报错:
 findstr /c:"[geom:" /c:"hitmask" /c:"ERROR" "%GBK%" 2>nul
+echo.
+echo [4b] 设置窗口 / 桥接（这两个前缀是"某个功能不好用"的第一现场）:
+findstr /c:"[settings]" "%GBK%" 2>nul
+findstr /c:"[跳过" /c:"ERR_MODULE_NOT_FOUND" "%LOGDIR%\bridge.log" 2>nul
 echo.
 echo [5] pet.err.log 末尾:
 set "ERRLOG=%LOGDIR%\pet.err.log"

@@ -475,19 +475,21 @@ async function boot() {
       // 优先用独立窗口（可拖动、不动桌宠窗口）。但 IPC 在个别情况下会挂住，
       // 所以**带超时 + 一定回退**：1.2 秒内没等到就地在桌宠窗口里弹面板，
       // 保证用户点"设置"永远有东西出来，而不是"点了没反应"。
+      //
+      // v1.1 追加：Rust 侧建窗口失败时会主动调 fallbackSettings()（见 main.rs）。
+      // 用户实测过"设置页面闪一下后消失" —— 那时失败只写日志，界面等于没反应；
+      // 有兜底之后至少能就地打开面板，用户有路可走。
       let settled = false;
-      tauriInvoke('open_settings').then(() => { settled = true; })
-        .catch((e) => {
-          settled = true;
-          frontLog(`独立设置窗口失败（${e && (e.message || e)}），退回窗口内面板`);
-          settings.open();
-        });
-      setTimeout(() => {
-        if (!settled) {
-          frontLog('独立设置窗口无响应，退回窗口内面板');
-          settings.open();
-        }
-      }, 1200);
+      const fallback = (why) => {
+        if (settled) return;
+        settled = true;
+        frontLog(`独立设置窗口不可用（${why}），退回窗口内面板`);
+        settings.open();
+      };
+      tauriInvoke('open_settings')
+        .then(() => { settled = true; })
+        .catch((e) => fallback((e && (e.message || e)) || 'IPC 失败'));
+      setTimeout(() => fallback('1.2 秒内没等到独立窗口'), 1200);
     },
     onDragEnd: () => { snapToEdge(); },
     /**
@@ -1073,6 +1075,17 @@ async function boot() {
       try { patch = typeof json === 'string' ? JSON.parse(json) : json; } catch { patch = {}; }
       frontLog(`收到设置页的外观改动 ${JSON.stringify(patch)}`);
       return applyAppearance(patch);
+    },
+    /**
+     * native 侧建独立设置窗口失败时的兜底入口（见 main.rs 的 open_settings）。
+     * 就地打开窗口内面板 —— 有面板总比"点了没反应"好。
+     */
+    fallbackSettings: (why) => {
+      frontLog(`fallbackSettings ${why}`);
+      try { settings.open(); return true; } catch (e) {
+        frontLog(`窗口内面板也打不开：${e && e.message}`);
+        return false;
+      }
     },
   };
 }

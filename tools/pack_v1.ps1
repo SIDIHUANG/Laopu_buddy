@@ -71,10 +71,45 @@ foreach ($needle in @('set "PETDIR=%ROOT%"', ':findlog', ':launch_once', 'set "V
 
 $size = (Get-Item $outPath).Length
 Write-Host ("[pack] {0}  ({1} bytes)" -f $outPath, $size)
+
+# ---------------------------------------------------------------------------
+# 桥接依赖：v1\tools\pet_bridge.mjs 会 import ../app/src/*（codex/dsh 适配器、
+# lines、usage-view、protocol）。所以包内必须带这一小撮 js，否则**独立包跑不起桥接**：
+#     Error [ERR_MODULE_NOT_FOUND]: Cannot find module '…\v1\app\src\adapters\codex.js'
+# v1.1 实测抓到（在此之前 v1\ 只在"工程里"能用，拷走就废）。
+# 只带这几个模块 —— 不整个拷 app/src（那会把渲染器、指针桥这些前端专用代码也塞进包里）。
+# ---------------------------------------------------------------------------
+$srcApp = Join-Path $Root 'app\src'
+$dstApp = Join-Path $outDir 'app\src'
+$needed = @('protocol.js', 'lines.js', 'usage-view.js',
+            'adapters\codex.js', 'adapters\dsh.js')
+foreach ($rel in $needed) {
+  $from = Join-Path $srcApp $rel
+  $to = Join-Path $dstApp $rel
+  if (-not (Test-Path $from)) { throw "pack_v1: 桥接依赖缺失 $from" }
+  $toDir = Split-Path -Parent $to
+  if (-not (Test-Path $toDir)) { New-Item -ItemType Directory -Force -Path $toDir | Out-Null }
+  Copy-Item $from $to -Force
+  Write-Host ("[pack] 桥接依赖  {0}  ({1} bytes)" -f $rel, (Get-Item $to).Length)
+}
+
+# 包内 js 的相对 import 全部要能解析到，否则就是"拷走后才发现缺文件"
+Get-ChildItem $dstApp -Recurse -Filter '*.js' -File | ForEach-Object {
+  $txt = [System.IO.File]::ReadAllText($_.FullName, $utf8)
+  foreach ($m in [regex]::Matches($txt, "from\s+'([^']+)'")) {
+    $spec = $m.Groups[1].Value
+    if ($spec.StartsWith('node:')) { continue }
+    $resolved = [System.IO.Path]::GetFullPath((Join-Path $_.DirectoryName $spec))
+    if (-not (Test-Path $resolved)) {
+      $problems += "包内 js 引用不到: $($_.Name) -> $spec"
+    }
+  }
+}
+
 if ($problems.Count) {
   Write-Host "[pack] 自检失败："
   $problems | ForEach-Object { Write-Host "   - $_" }
   exit 1
 }
-Write-Host "[pack] 自检通过：PETDIR 指向包自身、日志双候选、关键标签齐全、GBK+CRLF"
+Write-Host "[pack] 自检通过：PETDIR 指向包自身、日志双候选、关键标签齐全、GBK+CRLF、桥接依赖齐全"
 exit 0

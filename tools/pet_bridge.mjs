@@ -57,6 +57,35 @@ function defaultOutDir() {
 const OUT_DIR = opt('out', defaultOutDir());
 
 // --------------------------------------------------------------------------- //
+// 限流日志
+// --------------------------------------------------------------------------- //
+/**
+ * 同一把 key 只在「第一次」和「之后每分钟一次」打印，并带上累计次数。
+ *
+ * 为什么需要：桥接里最热的两个循环（scan 每 500ms、dsh 轮询）一旦出问题，
+ * 就会把同一句话重复几十万遍 —— 用户机器上 bridge.out.log 曾达到 **9MB**，
+ * 全是同一行 `[跳过] undefined: …`。刷屏的代价不只是占地方：
+ * 真正有用的那几行被淹掉，排查时第一眼看到的是噪音。
+ */
+const throttledAt = new Map();
+function logThrottled(key, message) {
+  const now = Date.now();
+  const prev = throttledAt.get(key);
+  if (!prev) {
+    throttledAt.set(key, { at: now, suppressed: 0 });
+    console.log(message);
+    return;
+  }
+  if (now - prev.at >= 60_000) {
+    const extra = prev.suppressed ? `（过去一分钟同类 ${prev.suppressed} 次）` : '';
+    throttledAt.set(key, { at: now, suppressed: 0 });
+    console.log(message + extra);
+    return;
+  }
+  prev.suppressed += 1;
+}
+
+// --------------------------------------------------------------------------- //
 // 尾部读取
 // --------------------------------------------------------------------------- //
 class Tailer {
@@ -122,7 +151,19 @@ function findRollouts(dir, limit = 5) {
     }
   }
   out.sort((a, b) => b.mtime - a.mtime);
-  return out.slice(0, limit).map((x) => x.file);
+  /**
+   * ⚠️ 这里必须返回 {file, mtime}，不能 map 成字符串。
+   *
+   * 调用方（scan()）是 `for (const { file, mtime } of findRollouts(...))`。
+   * 之前这里写成 `.map((x) => x.file)`，于是 file/mtime 全是 undefined：
+   *   * `now - undefined` = NaN，`NaN > CODEX_FRESH_MS` 永远 false
+   *     → "文件级新鲜度过滤"**完全失效**（历史会话会被当成当前状态）；
+   *   * 紧跟着 `new Tailer(undefined)` 抛异常，被 catch 打成
+   *     `[跳过] undefined: The "path" argument must be of type string…`，
+   *     每 500ms 一轮刷屏 —— 用户机器上那份 bridge.out.log 有 9MB 全是它。
+   * v1.1 实测抓到（托盘/设置窗口之外最影响可用性的一个 bug）。
+   */
+  return out.slice(0, limit);
 }
 
 // --------------------------------------------------------------------------- //
@@ -327,7 +368,9 @@ function scan() {
         });
         console.log(`[watch] ${path.basename(file)}`);
       } catch (e) {
-        console.log(`[跳过] ${file}: ${e.message}`);
+        // 限流：这个 scan 每 500ms 跑一轮，监视目录一有问题就会每轮刷一条。
+        // 曾经因此写出 9MB 的日志（同一句话重复几十万遍），既掩盖真问题又占磁盘。
+        logThrottled(`skip:${file}`, `[跳过] ${path.basename(String(file))}: ${e.message}`);
       }
     }
   }

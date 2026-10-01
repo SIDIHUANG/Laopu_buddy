@@ -119,6 +119,75 @@ v1 的启动器有两个结构性毛病：
 > ⚠️ 关于上表第 1 条：这也解释了为什么 v1 文档里"用户双击时 `NIM_ADD err=5`、agent 启动时 ok=1"
 > 那个观察**不可靠** —— 两次读的可能不是同一个文件。
 
+### 0.6 用户实测"设置打不开 + 小人一直不进入 working"（v1.1 第四版）
+
+这两个都是**真 bug**，而且都能在日志里一眼看到，只是之前没人去看那两行。
+
+#### (1) 设置窗口：闪一下就没
+
+日志（用户机器）：
+
+```
+[settings] 创建窗口失败：runtime error: failed to create webview:
+  WebView2 error: WindowsError(Error { code: HRESULT(0x8007139F),
+  message: "组或资源的状态不是执行请求操作的正确状态。" })
+```
+
+`0x8007139F` = `ERROR_INVALID_STATE`。根因是 **browser arguments 不一致**：
+
+* `main` 窗口是用**配置**建的，`tauri.conf.json` 里写了
+  `additionalBrowserArgs: "--disable-gpu"`；
+* `settings` 窗口是用 `WebviewWindowBuilder` 建的，**没传**这个参数，
+  于是它拿到的是 wry 的默认参数（`--disable-features=msWebOOUI,…`）。
+
+同一个进程里出现两个"browser arguments 不同"的 WebView，WebView2 直接拒绝
+（wry 的文档原话：不同 browser arguments 必须配不同 data directory）。
+
+**修法**：把参数抽成 `MAIN_ADDITIONAL_BROWSER_ARGS` 常量，设置窗口显式传同一个值；
+并且 `open_settings_window()` 改成**返回是否成功**，失败时让前端调
+`fallbackSettings()` 就地打开窗口内面板 —— 用户至少不会"点了没反应"。
+
+#### (2) 小人一直不进入 working：桥接里有三个 bug
+
+日志（用户机器）：整场只有一行 `state → idle`，**零事件**。
+桥接日志 9MB，内容几乎全是同一句：
+
+```
+[跳过] undefined: The "path" argument must be of type string or an instance of Buffer or URL.
+```
+
+| # | Bug | 后果 |
+|---|---|---|
+| a | `findRollouts()` 结尾 `.map((x) => x.file)` 把 `{file, mtime}` **变成了字符串**，而 `scan()` 是 `for (const { file, mtime } of …)` | 两者都是 `undefined`：`now - undefined` = NaN → **文件级新鲜度过滤完全失效**（历史会话被当成当前状态）；紧跟着 `new Tailer(undefined)` 抛异常被 catch 成上面那句，**每 500ms 刷一次** |
+| b | 那句 catch 日志没有任何限流 | 用户机器上 `bridge.out.log` 涨到 **9MB**，真正有用的行被淹掉 |
+| c | **`v1\` 包没带 `app/src/*`**，而 `tools/pet_bridge.mjs` 会 `import '../app/src/adapters/codex.js'` | 单独拷走 `v1\` 后桥接 **ERR_MODULE_NOT_FOUND 直接退出** → 桌宠永远 idle。也就是说 v1 的"独立包"从来没能真正独立跑过 |
+
+**修法**：
+* `findRollouts` 返回 `{file, mtime}`（并写明为什么不能 map 成字符串）；
+* 新增 `logThrottled()`：同一把 key 每分钟最多一条，并带"过去一分钟同类 N 次"；
+* `tools/pack_v1.ps1` 现在会把 `protocol.js / lines.js / usage-view.js /
+  adapters/codex.js / adapters/dsh.js` 一并拷进包内 `app/src/`，
+  并**逐个校验包内 js 的相对 import 都能解析**；
+* 启动器把桥接的 stdout/stderr 重定向到 `runtime\bridge.log`（之前写控制台，
+  控制台一关它写 stdout 失败就可能退出），启动后用 `/health` 确认一次并打印结论；
+* 新增 `tools/bridge_deps_probe.mjs`：不 spawn 子进程就能验证"包内桥接依赖齐全"
+  （受限沙箱里 `spawn` 会 EPERM，所以不能用"起一个桥接进程"来测）。
+
+#### 实测对比（同一次修复前后）
+
+```
+修复前：bridge.out.log 9MB，几乎全是 `[跳过] undefined: …`
+修复后：17 行
+        [跳过旧会话] rollout-2026-09-23T…jsonl（191 小时前）   ← 新鲜度过滤生效
+        [dsh] 发现 6 个会话投影，开始轮询
+        [dsh] session-… → tool/call, usage/update              ← 事件在产出
+```
+
+> 📌 一条给自己的提醒：这两件事都**已经在日志里写着**了
+> （`[settings] 创建窗口失败：… 0x8007139F`、`[跳过] undefined: …`）。
+> 以后用户报"某个功能不好用"，第一步就该去翻对应前缀的日志行，
+> 而不是先猜。这也说明**自检段要把日志里这几类行都抓出来**（启动器已包含）。
+
 ---
 
 ## 1. 🟡 仍未解决（按用户决定处理）

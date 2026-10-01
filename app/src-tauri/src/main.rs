@@ -302,18 +302,35 @@ mod native_tray {
     }
 }
 
-/// 独立的设置窗口。
+/// 独立的设置窗口。返回是否**确实**创建成功了。
+///
+/// 为什么要返回 bool：v1.1 之前失败只写日志，界面上表现为"点设置没反应"，
+/// 而用户只看到"闪一下"。前端需要知道失败才能退回窗口内面板（见 open_settings）。
 ///
 /// 为什么要独立窗口（用户明确要求）：设置面板以前塞在桌宠窗口里，
 /// 一打开就得把窗口从 340×470 放大到 580×660 —— 无论怎么调位置，
 /// 都会出现"桌宠被盖住/被挤走"的问题，用户看不到自己调的大小和透明度。
 /// 独立普通窗口（可拖动、可缩放）后，桌宠窗口**完全不动**。
-fn open_settings_window(app: &AppHandle) {
+///
+/// ⚠️ 关键约束（v1.1 实测踩到，用户报"设置页面会闪一下后消失"）：
+/// `main` 窗口是用**配置**建的（`tauri.conf.json` 里带了
+/// `additionalBrowserArgs: "--disable-gpu"`），而这里是用 builder 建的 ——
+/// 如果不显式传，它会拿到 **wry 的默认参数**，于是同一个进程里出现两个
+/// "browser arguments 不同"的 WebView。WebView2 对此直接拒绝：
+///
+///     HRESULT(0x8007139F)「组或资源的状态不是执行请求操作的正确状态。」
+///
+/// 日志里表现为 `[settings] 创建窗口失败：… 0x8007139F`，界面表现就是
+/// "闪一下然后没有"。所以这里必须把主窗口那套参数**照抄一遍**。
+/// 参见 wry 的说明：不同 browser arguments 必须配不同 data directory。
+const MAIN_ADDITIONAL_BROWSER_ARGS: &str = "--disable-gpu";
+
+fn open_settings_window(app: &AppHandle) -> bool {
     if let Some(w) = app.get_webview_window("settings") {
         let _ = w.show();
         let _ = w.unminimize();
         let _ = w.set_focus();
-        return;
+        return true;
     }
     // 注意：**不能**把查询串写进 WebviewUrl::App —— Tauri 会把整串当文件路径，
     // 于是去找 "index.html?view=settings" 这个文件，找不到 → 页面一片空白（实测踩到）。
@@ -332,6 +349,8 @@ fn open_settings_window(app: &AppHandle) {
     // （用户实测截图里"设置面板中间冒出一小块东西"，其实就是被盖住的桌宠窗口）
     .always_on_top(true)
     .skip_taskbar(false)
+    // 与 main 窗口保持完全一致的浏览器参数（见函数头注释，少这一行就是 0x8007139F）
+    .additional_browser_args(MAIN_ADDITIONAL_BROWSER_ARGS)
     // 窗口底色：页面加载前是窗口背景，默认白色会闪一下（用户实测"先白屏再呈现"）
     .background_color(tauri::window::Color(27, 30, 36, 255))
     .build()
@@ -362,8 +381,12 @@ fn open_settings_window(app: &AppHandle) {
                 }
             });
         }
-        Err(e) => logln(format!("[settings] 创建窗口失败：{e}")),
+        Err(e) => {
+            logln(format!("[settings] 创建窗口失败：{e}"));
+            return false;
+        }
     }
+    true
 }
 
 #[tauri::command]
@@ -374,12 +397,31 @@ fn open_settings(app: AppHandle) {
     //     它会和主线程互等，于是前端的 Promise 既不 resolve 也不 reject
     //     （表现："点了没反应、也不报错"）。
     // 所以从旁路线程发起，命令立刻返回，主线程随后被唤醒去建窗口。
+    //
+    // v1.1 追加：窗口建失败时**告诉前端**，让它退回"窗口内面板"。
+    // 之前失败只写日志，用户看到的是"闪一下然后什么都没有"，等于点设置没反应。
     std::thread::spawn(move || {
         let handle = app.clone();
+        let handle2 = app.clone();
         if let Err(e) = app.run_on_main_thread(move || {
-            open_settings_window(&handle);
+            let ok = open_settings_window(&handle);
+            if !ok {
+                logln("[settings] 独立窗口不可用，让前端退回窗口内面板");
+                if let Some(main) = handle2.get_webview_window("main") {
+                    let _ = main.eval(
+                        "window.PresagePet && window.PresagePet.fallbackSettings \
+                         && window.PresagePet.fallbackSettings('独立设置窗口创建失败')",
+                    );
+                }
+            }
         }) {
             logln(format!("[settings] 派发到主线程失败：{e}"));
+            if let Some(main) = app.get_webview_window("main") {
+                let _ = main.eval(
+                    "window.PresagePet && window.PresagePet.fallbackSettings \
+                     && window.PresagePet.fallbackSettings('派发到主线程失败')",
+                );
+            }
         }
     });
 }

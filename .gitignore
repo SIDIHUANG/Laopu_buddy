@@ -2,9 +2,35 @@
 app/src-tauri/target/
 app/dist/
 v1/
+v2/app/src-tauri/target/
+v2/app/dist/
+
+# v2 交付包（v2\）里由 tools/pack_v2.ps1 装配出来的那些东西：不入库。
+# ⚠️ 注意 `v2/app/src/` 是**前端源码**，必须入库 —— 只有"为了桥接独立运行
+#    而从工程 tools\ 复制进包"的这几个副本才忽略（它们的源在别处）。
+v2/presage-pet.exe
+v2/WebView2Loader.dll
+v2/runtime/
+v2/tools/
+v2/app/src/protocol.js
+v2/app/src/lines.js
+v2/app/src/usage-view.js
+v2/app/src/adapters/
+v2/BUILD.txt
+
+# ⚠️ 不要把 v2 再拷进 v1\ 里：v1 是冻结基线，而且 tools/pack_v1.ps1 会
+#    `robocopy /E` 整个 app\，那会把 v2 的源码副本（含 dist）一起卷进去。
+#    想让 v1 用 v2，正确做法是把 v2\ 整个目录拷到**别的**地方（或直接双击 exe）。
+v1/v2/
 
 # 运行时数据（日志、事件流、WebView2 用户数据）
 runtime/
+v2/runtime/
+
+# v2 发行产物（tools/release_v2.ps1 装配出来的目录 + 压缩包）
+# 它们是"从 v2\ 重新生成的产物"，不入库 —— 每次装配都带新时间戳，
+# 签进仓库只会攒一堆 25 MB 的 zip。
+release/
 
 # 原始素材（大文件，不进仓库；用 tools/build_sprites.py 重新生成 assets/）
 avatar_baseline/

@@ -1,0 +1,10 @@
+# 静态链接 MinGW 运行时。
+#
+# 为什么必须：默认的 x86_64-pc-windows-gnu 构建会动态依赖 libgcc_s_dw2-1.dll，
+# 而用户机器上通常没有它（也不在 PATH 里）——双击 exe 直接以
+# 0xC0000135 (STATUS_DLL_NOT_FOUND) 退出，没有任何提示。
+# 实测：v1 包里的 release exe 就是这个问题。
+#
+# 加上 crt-static 后 exe 自包含，拷到任何机器都能跑。
+[target.x86_64-pc-windows-gnu]
+rustflags = ["-C", "target-feature=+crt-static"]

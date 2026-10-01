@@ -1,4 +1,4 @@
-# Minimal probe: call Shell_NotifyIconW only (no Tauri, no WebView2) and report
+﻿# Minimal probe: call Shell_NotifyIconW only (no Tauri, no WebView2) and report
 # the result plus whether this session has a shell (explorer.exe).
 #
 # Goal (OPEN-ISSUES 1.1 step 1): take "tray registration denied" out of the

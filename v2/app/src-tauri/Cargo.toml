@@ -1,0 +1,43 @@
+[package]
+name = "presage-pet-v2"
+version = "0.1.0"
+edition = "2021"
+description = "普瑞塞斯桌面宠物 v2（双击 exe 即用，exe 自己拉起桥接）"
+
+# 交付的 exe 名字固定成 presage-pet.exe（不带 v2）：
+#   * 用户双击的就是它，名字短一点、和 v1 一致，文档/快捷方式都不用两套；
+#   * 包名带 -v2 只是为了让两个 cargo 目标目录互不干扰（v1 的构建缓存还在）。
+[[bin]]
+name = "presage-pet"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon", "image-png"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# 只为了自己精确控制 WS_EX_TRANSPARENT：Tauri 的 set_ignore_cursor_events
+# 只加不减，导致切回「可交互」时窗口仍然穿透（实测确认）。
+#
+# Win32_Security            —— elevation_report() 用 OpenProcessToken/GetTokenInformation
+# Win32_UI_Input_KeyboardAndMouse —— 托盘不可用时的热键兜底（RegisterHotKey）
+# Win32_Networking_WinHttp    —— v2 新增：exe 自己查 /health（判断桥接要不要起、起没起来）。
+#                              用系统的 WinHTTP，不引第三方 HTTP crate
+#                              （少一个依赖 = 少一处 release 风险）。
+#                              注意 feature 名是 **Networking** 而不是 Net ——
+#                              写错时 cargo 会直接列全部可用 feature（第一轮就撞到了）。
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_UI_Shell",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_System_LibraryLoader",
+    "Win32_Graphics_Gdi",
+    "Win32_System_StationsAndDesktops",
+    "Win32_System_Threading",
+    "Win32_System_Registry",
+    "Win32_Security",
+    "Win32_Networking_WinHttp",
+] }

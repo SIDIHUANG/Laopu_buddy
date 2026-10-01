@@ -1,4 +1,4 @@
-param(
+﻿param(
   [string]$Launcher = "bat",
   [string]$OutDir = "",
   [int[]]$SampleSeconds = @(3, 6, 10, 14, 20, 30, 45, 60),

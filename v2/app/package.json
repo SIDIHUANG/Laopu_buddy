@@ -1,0 +1,10 @@
+{
+  "name": "presage-pet-web",
+  "private": true,
+  "type": "module",
+  "description": "普瑞塞斯桌宠前端（零构建 ES 模块，不用打包器）",
+  "scripts": {
+    "dev": "python -m http.server 8791 --directory app/dist",
+    "test": "node app/test/logic.test.mjs"
+  }
+}

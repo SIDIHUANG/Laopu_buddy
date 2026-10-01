@@ -246,11 +246,11 @@ echo.
 echo [4] 几何 / 素材 / 报错:
 findstr /c:"[geom:" /c:"hitmask" /c:"ERROR" "%GBK%" 2>nul
 echo.
-echo [4b] 设置窗口 / 桥接（这两个前缀是"某个功能不好用"的第一现场）:
+echo [4b] 设置窗口 / 桥接（第一现场；**这是自检那一刻的快照** —— 若你在自检之后才开设置，空着是正常的）:
 findstr /c:"[settings]" "%GBK%" 2>nul
 findstr /c:"[跳过" /c:"ERR_MODULE_NOT_FOUND" "%LOGDIR%\bridge.log" 2>nul
 echo.
-echo [5] pet.err.log 末尾:
+echo [5] pet.err.log 末尾（(空) 或没有输出 = 正常）:
 set "ERRLOG=%LOGDIR%\pet.err.log"
 if not exist "%ERRLOG%" if exist "%V1RUNTIME%\pet.err.log" set "ERRLOG=%V1RUNTIME%\pet.err.log"
 if exist "%ERRLOG%" powershell -NoProfile -ExecutionPolicy Bypass -Command ^

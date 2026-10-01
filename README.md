@@ -9,6 +9,25 @@
 
 ---
 
+## 现在用哪一版：v2（exe 启动版）
+
+> **双击 `presage-pet.exe` 就是全部** —— 不需要 `.bat`，不需要安装任何东西。
+> 下载见 [Releases](https://github.com/SIDIHUANG/Laopu-body/releases)（tag `v2-baseline`）。
+
+v2 相比 v1.1 **只改"谁负责启动"**：启动逻辑从 `.bat` 搬进 exe（预检、单实例、
+WebView2 profile 自愈、无窗口拉起桥接、退出收尾、`--diag` 诊断）。
+**前端逻辑一行未改**（`v2/app/src/*.js` 与 v1.1 逐字节相同）。
+
+* 怎么用 / 怎么看日志 / 出问题怎么办 → [README-V2.txt](README-V2.txt)
+* 这一版改了什么 / 怎么重建 → [V2-BASELINE.md](V2-BASELINE.md)
+* 已知问题 → [OPEN-ISSUES-V2.md](OPEN-ISSUES-V2.md)
+
+**下文仍然有效**：除「快速开始」和「目录结构」里少数步骤写的是 v1.1 的路径
+（`app\`、`启动桌宠.bat`）外，设计要点、台词库、用量/余额、外观设置、
+调试手段等都是前端内容，v2 原样适用。
+
+---
+
 ## v1.1 修了什么（先看这段，再看下面）
 
 v1 里"她出现几秒后只剩半截 / 整个消失、只剩气泡文字"的根因**不是渲染或合成**，

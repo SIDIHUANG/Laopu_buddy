@@ -270,19 +270,24 @@ async function boot() {
 
   const hud = document.getElementById('hud');
 
-  // ---------- 临时放大窗口（设置面板 / 右键菜单共用） ----------
+  // ---------- 临时放大窗口（窗口内设置面板 / 右键菜单共用） ----------
   /**
-   * 为什么要"临时放大"：桌宠窗口只比角色 + 一点余量大一点（宽 = 角色宽 + 140，
-   * 高 = 角色实际占高 + 气泡区），而右键菜单本身有 **约 160px** 高（5 个按钮 ×
-   * (20px 行高 + 10px 内边距) + 容器内边距）。在 size≥320 时窗口只剩 104px
-   * 左右的空档 —— 菜单物理上放不下，底部会被窗口裁掉（用户实测：
-   * "在小人不同高度右键会影响选项栏是否完全呈现"）。
+   * 为什么要"临时放大"：
+   *   * 右键菜单约 **160px** 高，而窗口在 size≥320 时只剩 ~104px 空档 ——
+   *     菜单物理上放不下，底部会被窗口裁掉（用户实测："在小人不同高度右键
+   *     会影响选项栏是否完全呈现"）；
+   *   * 窗口内设置面板（独立设置窗口建不出来时的兜底）本身要 **580×660**，
+   *     而桌宠窗口只有 340 宽 —— 不放大就只能挤出 92vw≈312px 的一条，
+   *     表单基本没法用。
    *
-   * 与其把窗口永久做高（那样背影区一大片空，点击穿透也更难判断），不如
+   * 与其把窗口永久做大（那样透明区一大片，点击穿透也更难判断），不如
    * **需要时才撑开、用完立刻收回**，并且以"角色的位置不动"为锚点。
+   *
+   * ⚠️ `needW` 必须参与计算：v1.1 第一版只放大了高度，于是兜底面板在
+   * 340px 宽的窗口里显示成一条细缝（尺寸设了但没生效，属于"看起来做了"的坑）。
    */
   let anchor = null; // { size:{w,h}, pos:{x,y}, cx, cy }
-  async function anchorWindow(needH) {
+  async function anchorWindow(needH, needW = 0) {
     const win = tauriWindow();
     if (!win) return;
     try {
@@ -300,7 +305,11 @@ async function boot() {
       }
       const { w: availW, h: availH } = screenWorkArea();
       const want = windowSizeFor(renderer.size);
-      const wLog = Math.max(want.w, Math.ceil(cur.size.width / dpr));
+      const curW = Math.ceil(cur.size.width / dpr);
+      const wLog = Math.min(
+        Math.max(want.w, curW, Math.ceil(Number(needW) || 0)),
+        Math.max(160, availW - 8),
+      );
       const hLog = Math.min(Math.max(want.h, Math.ceil(needH)), availH - 8);
       await win.setSize(tauriLogicalSize(wLog, hLog));
       await new Promise((res) => requestAnimationFrame(res));
@@ -424,11 +433,12 @@ async function boot() {
     onProviderChanged: () => pushLine('provider', BUBBLE.INFO, '', 'presage'),
     usageBroadcast: { get: () => usageBroadcastEnabled, set: setUsageBroadcast },
     appearance: { get: () => appearance, set: (patch) => applyAppearance(patch) },
-    // 设置面板在 340px 宽的桌宠窗口里太挤，打开时把窗口临时放大，关掉再收回。
+    // 窗口内面板在 340px 宽的桌宠窗口里太挤，打开时把窗口临时放大，关掉再收回。
     // 与右键菜单共用同一套"锚定角色 + 用完还原"逻辑（见 anchorWindow）。
+    // needW=580：面板本身要 580 宽，只放大高度是不够的（v1.1 第一版就漏了这个）。
     onResize: async (w, h) => {
       try {
-        if (w) await anchorWindow(h);
+        if (w) await anchorWindow(h, w);
         else await releaseWindow();
       } catch (e) { frontLog(`settings 调整窗口失败 ${e && e.message}`); }
     },

@@ -10,7 +10,7 @@ import { SpriteLibrary } from '../src/assets.js';
 import { PetRenderer } from '../src/renderer.js';
 import { placeMenu } from '../src/pointer.js';
 import {
-  windowSizeFor, CONTENT_SCALE, MARGIN, BUBBLE_SPACE, maxSizeForScreen,
+  windowSizeFor, CONTENT_SCALE, MARGIN, BUBBLE_SPACE, maxSizeForScreen, SETTINGS_PANEL,
 } from '../src/appearance.js';
 
 let passed = 0;
@@ -550,6 +550,33 @@ test('窗口必须装得下角色 + 气泡；装不下右键菜单时靠"临时�
   assert.equal(maxSizeForScreen({ availWidth: 1280, availHeight: 752 }), 480);
   assert.ok(maxSizeForScreen({ availWidth: 1024, availHeight: 600 }) < 480,
     '小屏上必须把尺寸压下来，否则角色会被屏幕裁掉');
+});
+
+test('窗口内设置面板必须真的被放大到能放下（v1.1 只放高了，宽度没动）', () => {
+  // 面板按 460px 宽设计 + 窗口边距 → 需要 SETTINGS_PANEL.w。
+  // 桌宠窗口默认只有 340 宽，且 CSS 里是 `max-width: 92vw`：
+  // 窗户不够宽时面板会被挤成 92vw，表单基本不能用。
+  // 这条测试盯的就是"anchorWindow 必须把 needW 算进去"。
+  const scr = { availWidth: 1280, availHeight: 752 };
+  const anchorWindowW = (size, needW) => Math.min(
+    Math.max(windowSizeFor(size, scr).w, windowSizeFor(size, scr).w, Math.ceil(needW || 0)),
+    Math.max(160, scr.availWidth - 8),
+  );
+  for (const size of [200, 320, 480]) {
+    const base = windowSizeFor(size, scr).w;
+    const grown = anchorWindowW(size, SETTINGS_PANEL.w);
+    assert.ok(grown >= SETTINGS_PANEL.w,
+      `size=${size}: 撑开后只有 ${grown}px 宽，放不下 ${SETTINGS_PANEL.w}px 的面板`);
+    // 面板在窗口里的可用宽度 = 窗口宽 - 边距；至少要 ≥ 460（面板设计宽）
+    assert.ok(grown - 16 >= 460, `size=${size}: 面板可用宽度不足`);
+    // 基础窗口不够宽的那些尺寸，必须**真的被放大**（不是"设了但没生效"）
+    if (base < SETTINGS_PANEL.w) {
+      assert.ok(grown > base, `size=${size}: 基础宽 ${base} 不够，但撑开后没变宽`);
+    }
+  }
+  // 撑开高度也要够（面板是 660 高，但窗口高度受屏幕限制时允许滚动）
+  const grownH = Math.min(Math.max(windowSizeFor(200, scr).h, SETTINGS_PANEL.h), scr.availHeight - 8);
+  assert.ok(grownH <= scr.availHeight, '撑开后不该超出屏幕可用高度');
 });
 
 // ---------------------------------------------------------------- run

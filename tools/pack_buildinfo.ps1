@@ -1,6 +1,11 @@
 ﻿param([string]$Root = (Split-Path -Parent $PSScriptRoot))
 # 生成 v1\BUILD.txt：记录包内每个文件的字节数与 SHA256，方便核对版本。
 # 单独成脚本是因为在 pwsh 里内联写容易踩引号/中文的坑（实测踩过）。
+#
+# ⚠️ 必须在**所有拷贝动作之后**跑（先 Copy-Item exe/dll，再跑这个）。
+#    实测踩过：先生成 BUILD.txt、后覆盖 exe → 清单里的哈希是旧的，
+#    等于这张"版本核对表"本身在骗人（自检时才发现 13 个里 1 个不符）。
+#    所以下面加了两道：脚本开头提示顺序，结尾**回读清单并逐个核对**哈希。
 $ErrorActionPreference = 'Stop'
 $out = Join-Path $Root 'v1\BUILD.txt'
 $commit = (& git -C $Root rev-parse --short HEAD) 2>$null
@@ -39,3 +44,23 @@ foreach ($f in $files) {
 [void]$L.Add('       只提示一次。入口请用右键菜单或上面两个热键，详见 OPEN-ISSUES.md 1.1。')
 [System.IO.File]::WriteAllLines($out, $L, (New-Object System.Text.UTF8Encoding($false)))
 Write-Host "[build] $out ($((Get-Item $out).Length) bytes, $($files.Count) 个文件)"
+
+# ---- 回读清单自查：任何一条哈希/字节数不符就直接失败，绝不留下假清单 ----
+$bad = @()
+foreach ($line in [System.IO.File]::ReadAllLines($out, (New-Object System.Text.UTF8Encoding($false)))) {
+  if ($line -match '^(\S+)\s+(\d+)\s+([0-9A-F]{64})$') {
+    $rel = $Matches[1]; $size = [int]$Matches[2]; $hash = $Matches[3]
+    $full = Join-Path $Root $rel
+    if (-not (Test-Path $full)) { $bad += "$rel 不见了" ; continue }
+    if ((Get-Item $full).Length -ne $size -or (Get-FileHash $full -Algorithm SHA256).Hash -ne $hash) {
+      $bad += "$rel 与清单不符（清单生成后有文件被覆盖？）"
+    }
+  }
+}
+if ($bad.Count) {
+  Write-Host '[build] 自查失败：'
+  $bad | ForEach-Object { Write-Host "   - $_" }
+  Write-Host '[build] 提示：先 Copy-Item exe/dll，再跑这个脚本。'
+  exit 1
+}
+Write-Host '[build] 自查通过：清单里每条哈希/字节数都与实物一致'

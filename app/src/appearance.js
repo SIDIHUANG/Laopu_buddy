@@ -52,6 +52,16 @@ export const BUBBLE_SPACE = 116;
 /** 角色尺寸下限 / 窗口尺寸下限，避免手改 localStorage 把窗口弄成 0 像素 */
 export const MIN_WINDOW = { w: 160, h: 220 };
 
+/**
+ * 窗口内设置面板需要的窗口尺寸（CSS px）。
+ *
+ * 用途：独立设置窗口建不出来时（WebView2 拒绝第二个 WebView 之类），
+ * 前端会就地打开 `#settings` 面板做兜底 —— 而那个面板本身按 460px 宽设计、
+ * 加上窗口边距需要约 580px。桌宠窗口只有 340px 宽，所以**必须先把窗口放大**，
+ * 否则面板会被挤成 92vw≈312px 的一条细缝（实测过：尺寸设了但没生效）。
+ */
+export const SETTINGS_PANEL = { w: 580, h: 660 };
+
 export function loadAppearance(storage = globalThis.localStorage) {
   try {
     const raw = JSON.parse(storage?.getItem(KEY) || '{}');

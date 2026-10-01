@@ -6,6 +6,10 @@
  * 真正的密钥写在 runtime/usage.json（本机文件）。
  */
 
+// 面板把窗口撑到多大：常量放 appearance.js，和"临时放大窗口"用的是同一个数，
+// 免得两边各写一遍 580×660 然后漂移。
+import { SETTINGS_PANEL } from './appearance.js';
+
 const fmtTokens = (n) => {
   if (!Number.isFinite(n) || n === 0) return '0';
   if (n >= 1e9) return `${(n / 1e9).toFixed(2)}B`;
@@ -159,9 +163,11 @@ export class SettingsPanel {
       return;
     }
     // 尺寸调整不阻塞、失败也无所谓：对话框是用户看得见的东西，优先
-    Promise.resolve(this.onResize?.(580, 660)).catch(() => {});
+    Promise.resolve(this.onResize?.(SETTINGS_PANEL.w, SETTINGS_PANEL.h)).catch(() => {});
     await this.refresh();
-    setTimeout(() => { Promise.resolve(this.onResize?.(580, 660)).catch(() => {}); }, 80);
+    setTimeout(() => {
+      Promise.resolve(this.onResize?.(SETTINGS_PANEL.w, SETTINGS_PANEL.h)).catch(() => {});
+    }, 80);
   }
 
   close() {

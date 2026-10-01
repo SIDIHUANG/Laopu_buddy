@@ -269,6 +269,79 @@ async function boot() {
   }
 
   const hud = document.getElementById('hud');
+
+  // ---------- 临时放大窗口（设置面板 / 右键菜单共用） ----------
+  /**
+   * 为什么要"临时放大"：桌宠窗口只比角色 + 一点余量大一点（宽 = 角色宽 + 140，
+   * 高 = 角色实际占高 + 气泡区），而右键菜单本身有 **约 160px** 高（5 个按钮 ×
+   * (20px 行高 + 10px 内边距) + 容器内边距）。在 size≥320 时窗口只剩 104px
+   * 左右的空档 —— 菜单物理上放不下，底部会被窗口裁掉（用户实测：
+   * "在小人不同高度右键会影响选项栏是否完全呈现"）。
+   *
+   * 与其把窗口永久做高（那样背影区一大片空，点击穿透也更难判断），不如
+   * **需要时才撑开、用完立刻收回**，并且以"角色的位置不动"为锚点。
+   */
+  let anchor = null; // { size:{w,h}, pos:{x,y}, cx, cy }
+  async function anchorWindow(needH) {
+    const win = tauriWindow();
+    if (!win) return;
+    try {
+      const dpr = window.devicePixelRatio || 1;
+      const cur = { size: await win.outerSize(), pos: await win.outerPosition() };
+      const r = hit.getBoundingClientRect();
+      if (!anchor) {
+        anchor = {
+          size: cur.size,
+          pos: cur.pos,
+          // 角色脚底在屏幕上的物理位置：放大/收小时靠它保证她不跳
+          cx: cur.pos.x + (r.left + r.width / 2) * dpr,
+          cy: cur.pos.y + r.bottom * dpr,
+        };
+      }
+      const { w: availW, h: availH } = screenWorkArea();
+      const want = windowSizeFor(renderer.size);
+      const wLog = Math.max(want.w, Math.ceil(cur.size.width / dpr));
+      const hLog = Math.min(Math.max(want.h, Math.ceil(needH)), availH - 8);
+      await win.setSize(tauriLogicalSize(wLog, hLog));
+      await new Promise((res) => requestAnimationFrame(res));
+      // 反推窗口位置，让角色原地不动
+      const r2 = hit.getBoundingClientRect();
+      const wantX = Math.round(anchor.cx - (r2.left + r2.width / 2) * dpr);
+      const wantY = Math.round(anchor.cy - r2.bottom * dpr);
+      const maxX = Math.round(availW * dpr - wLog * dpr);
+      const maxY = Math.round(availH * dpr - hLog * dpr);
+      await win.setPosition(tauriPhysicalPosition(
+        Math.min(Math.max(wantX, 0), Math.max(0, maxX)),
+        Math.min(Math.max(wantY, 0), Math.max(0, maxY)),
+      ));
+      logGeometry('grow');
+    } catch (e) {
+      frontLog(`放大窗口失败：${(e && (e.message || e)) || JSON.stringify(e)}`);
+    }
+  }
+
+  async function releaseWindow() {
+    const win = tauriWindow();
+    if (!win || !anchor) return;
+    const saved = anchor;
+    anchor = null;
+    try {
+      await win.setSize(saved.size);
+      await win.setPosition(saved.pos);
+      logGeometry('shrink');
+    } catch (e) {
+      frontLog(`还原窗口失败：${(e && (e.message || e)) || JSON.stringify(e)}`);
+    }
+  }
+
+  /**
+   * 右键菜单需要多少高度 = 角色实际占高 + 脚底留白 + 菜单高 + 一点边距。
+   * 菜单高由 pointer.js 量出来后传进来（那里才拿得到真实布局）。
+   */
+  function contextMenuNeededHeight(menuH) {
+    const h = Number(menuH) > 0 ? Number(menuH) : 160;
+    return renderer.size * CONTENT_SCALE + renderer.size * MARGIN + h + 16;
+  }
   let lastLoggedAnim = null;
   let lastStateAt = 0;
   arbiter.subscribe((snap) => {
@@ -351,64 +424,13 @@ async function boot() {
     onProviderChanged: () => pushLine('provider', BUBBLE.INFO, '', 'presage'),
     usageBroadcast: { get: () => usageBroadcastEnabled, set: setUsageBroadcast },
     appearance: { get: () => appearance, set: (patch) => applyAppearance(patch) },
-    // 设置页在 340px 宽的桌宠窗口里太挤，打开时把窗口临时放大，关掉再收回
+    // 设置面板在 340px 宽的桌宠窗口里太挤，打开时把窗口临时放大，关掉再收回。
+    // 与右键菜单共用同一套"锚定角色 + 用完还原"逻辑（见 anchorWindow）。
     onResize: async (w, h) => {
-      const win = tauriWindow();
-      if (!win) return;
       try {
-        if (w) {
-          // 只在第一次记录原始尺寸/位置：open() 之后还会再确认一次尺寸，
-          // 每次都记的话第二次记下的就是"已经放大后"的尺寸，关掉时自然恢复不回去（实测踩到）
-          if (!settings._savedSize) {
-            settings._savedSize = await win.outerSize();
-            settings._savedPos = await win.outerPosition();
-            // 记住角色此刻在屏幕上的位置：放大窗口时要让她**原地不动**，
-            // 否则窗口一变大会把她挤到别处，用户就看不清自己调的大小了
-            const r = hit.getBoundingClientRect();
-            const dpr0 = window.devicePixelRatio || 1;
-            settings._anchor = {
-              x: settings._savedPos.x + (r.left + r.width / 2) * dpr0,
-              y: settings._savedPos.y + r.bottom * dpr0,
-            };
-          }
-          await win.setSize(tauriLogicalSize(w, h));
-          // 等一帧让布局按新尺寸重排，再量角色位置并反推窗口位置
-          await new Promise((res) => requestAnimationFrame(res));
-          const a = settings._anchor;
-          if (a) {
-            const dpr = window.devicePixelRatio || 1;
-            const r2 = hit.getBoundingClientRect();
-            const cur = await win.outerPosition();
-            const wantX0 = Math.round(a.x - (r2.left + r2.width / 2) * dpr);
-            const wantY0 = Math.round(a.y - r2.bottom * dpr);
-            // 夹一下：窗口本身可以有一部分在屏幕外（那部分是透明的），
-            // 但**设置面板不能出屏**，否则左边的控件点不到
-            // （实测：锚定会把窗口推到 x=-210，而面板居中 → 左边 150px 在屏幕外）
-            const sw = Math.round((window.screen?.availWidth || 1280) * dpr);
-            const sh = Math.round((window.screen?.availHeight || 800) * dpr);
-            const panelW = 460 * dpr;
-            const panelLeftInWin = (w * dpr - panelW) / 2;
-            const pad = 8 * dpr;
-            const wantX = Math.min(Math.max(wantX0, Math.round(-panelLeftInWin + pad)),
-              Math.round(Math.max(0, sw - panelLeftInWin - panelW - pad)));
-            const wantY = Math.min(Math.max(wantY0, Math.round(pad)),
-              Math.round(sh - 60 * dpr));
-            if (Math.abs(cur.x - wantX) > 1 || Math.abs(cur.y - wantY) > 1) {
-              await win.setPosition(tauriPhysicalPosition(wantX, wantY));
-            }
-            frontLog(`设置页：窗口 ${cur.x},${cur.y} → ${wantX},${wantY}`
-              + `（角色锚定 ${Math.round(a.x)},${Math.round(a.y)}`
-              + `${wantX !== wantX0 || wantY !== wantY0 ? '，已夹回屏幕内' : ''}）`);
-          } else {
-            await win.center();
-          }
-        } else if (settings._savedSize) {
-          await win.setSize(settings._savedSize);
-          if (settings._savedPos) await win.setPosition(settings._savedPos);
-          settings._savedSize = null;
-          settings._savedPos = null;
-        }
-      } catch (e) { frontLog(`settings 调整窗口失败 ${e.message}`); }
+        if (w) await anchorWindow(h);
+        else await releaseWindow();
+      } catch (e) { frontLog(`settings 调整窗口失败 ${e && e.message}`); }
     },
   });
   settings.bind();
@@ -468,6 +490,15 @@ async function boot() {
       }, 1200);
     },
     onDragEnd: () => { snapToEdge(); },
+    /**
+     * 右键菜单打开/关闭时撑开/收回窗口。
+     *
+     * 菜单约 160px 高，而窗口在 size≥320 时只剩 ~104px 空档 —— 不撑开就一定被裁
+     * （用户实测："在小人不同高度右键会影响选项栏是否完全呈现"）。
+     * 撑开时以角色脚底为锚点，所以她自己不会跳。
+     */
+    onMenu: (menuH) => { anchorWindow(contextMenuNeededHeight(menuH)).catch(() => {}); },
+    onMenuClose: () => { releaseWindow().catch(() => {}); },
   });
   pointer.init().catch((e) => console.warn('[pointer] init 失败', e));
 

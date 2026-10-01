@@ -4,13 +4,11 @@ rem  普瑞塞斯桌宠 · v1.1 启动器（**唯一实现**；v1\ 里那份只负责转发到这里）
 rem
 rem  这份启动器只做四件事，每一件都是被真实故障逼出来的：
 rem
-rem  1) 用 `start "" /b /d "..." exe` 直接启动，不经过 PowerShell。
+rem  1) 用 `start "" /b exe` 直接启动，不经过 PowerShell。
 rem     为什么：老版本用 `powershell -Command Start-Process ... -RedirectStandardOutput`
 rem     启动，进程树里多了一层 powershell.exe。用户双击时能看到控制台一闪，
 rem     桌宠跟着抖动甚至不再绘制（多一层进程抢前台/抢合成）。直接 start 的
 rem     进程树里只有桌宠自己，和"手动双击 exe"完全一致。
-rem     /d 显式给出工作目录：桌宠会往「当前目录\runtime\pet.out.log」写日志，
-rem     不指定的话从别处调用 bat 就会写到别处，排障时找不到。
 rem
 rem  2) 用一个**固定的、可自愈的** profile 目录：runtime\webview2
 rem     为什么要固定：WebView2 的 profile 一旦被写坏（进程被强杀、磁盘满、
@@ -36,8 +34,11 @@ rem    * 不要用 `chcp 65001` —— 本文件用系统代码页（GBK）保存，
 rem      两者不一致时中文全是乱码。
 rem    * 缺 WebView2Loader.dll 会让双击 exe **静默秒退**（0xC0000135），
 rem      所以第 1 步必须替用户查出来。
-rem    * node 不能只认 DSH 自带的那份 —— 必须回落到 PATH 上的 node，
-rem      否则"没装 DSH 的机器"就永远起不了桥接。
+rem    * **不要假设日志一定在 %LOGDIR%** —— 桌宠是往"自己的当前目录\runtime\
+rem      pet.out.log"写的，某些调用方式下工作目录会变成 v1\，日志就落到
+rem      v1\runtime\。v1.1 第一版因此让自检段 [2]~[5] 全是空的（用户实测抓到），
+rem      所以下面用 :findlog 在两个候选目录里轮询。
+rem    * node 不能只认 DSH 自带的那份 —— 必须回落到 PATH 上的 node。
 rem ============================================================================
 
 rem ---------------------------------------------------------------------------
@@ -59,6 +60,9 @@ set "ROOT=%~dp0"
 set "PETDIR=%ROOT%v1"
 if not exist "%PETDIR%\presage-pet.exe" set "PETDIR=%ROOT%"
 set "PET=%PETDIR%\presage-pet.exe"
+rem 注意：%ROOT% 末尾**自带**反斜杠，所以这里是 %ROOT%v1 而不是 %ROOT%\v1。
+rem 写成 %PETDIR%runtime 会得到 "…\v1runtime"（少一个反斜杠）—— v1.1 第二版踩过。
+set "V1RUNTIME=%ROOT%v1\runtime"
 
 rem ---------------------------------------------------------------------------
 rem  1. 文件齐全性
@@ -163,8 +167,12 @@ echo   日志： %LOGDIR%\pet.out.log   与   %%LOCALAPPDATA%%\PresagePet\pet.log
 echo ----------------------------------------------------------------------------
 
 if "%WANT_DIAG%"=="1" set "PRESAGE_SELFTEST=geom"
+del /q "%LOGDIR%\pet.out.log" "%LOGDIR%\pet.err.log" >nul 2>nul
+del /q "%V1RUNTIME%\pet.out.log" "%V1RUNTIME%\pet.err.log" >nul 2>nul
 echo [i] 正在启动...
 
+rem /b = 不新建窗口；路径后不加东西 = 不等待。批处理随后自己退出，
+rem 桌宠就是独立进程（和双击 exe 一样，不会有父控制台在退出时把它带走）。
 call :launch_once
 ping -n 13 127.0.0.1 > nul
 
@@ -176,6 +184,8 @@ if errorlevel 1 (
   echo failed %DATE% %TIME%> "%FAILMARK%"
   rmdir /s /q "%WV2%" 2>nul
   if not exist "%WV2%" mkdir "%WV2%" 2>nul
+  del /q "%LOGDIR%\pet.out.log" "%LOGDIR%\pet.err.log" >nul 2>nul
+  del /q "%V1RUNTIME%\pet.out.log" "%V1RUNTIME%\pet.err.log" >nul 2>nul
   call :launch_once
   ping -n 13 127.0.0.1 > nul
   tasklist /fi "imagename eq presage-pet.exe" 2>nul | findstr /i "presage-pet.exe" >nul
@@ -189,12 +199,19 @@ if errorlevel 1 (
 
 if "%WANT_NOWAIT%"=="1" exit /b 0
 
-if exist "%LOGDIR%\pet.out.log" powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-  "Get-Content -Encoding UTF8 '%LOGDIR%\pet.out.log' | Set-Content -Encoding Default '%LOGDIR%\pet.out.gbk.log'" >nul 2>nul
-if not exist "%LOGDIR%\pet.out.gbk.log" (
-  echo [i] 没有 runtime\pet.out.log —— 桌宠正常都会双写一份，
-  echo     请改看:  %%LOCALAPPDATA%%\PresagePet\pet.log
+rem 日志可能在两处之一（见文件头"已知坑"）：轮询着找，别假设。
+echo [i] 正在等日志...
+call :findlog
+
+if not defined LOGFILE (
+  echo [i] 没有找到 pet.out.log（两个候选目录都没有）
+  echo     桌宠正常都会写一份；请改看:  %%LOCALAPPDATA%%\PresagePet\pet.log
+  echo     候选1: %LOGDIR%\pet.out.log
+  echo     候选2: %V1RUNTIME%\pet.out.log
 )
+if defined LOGFILE powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+  "Get-Content -Encoding UTF8 '%LOGFILE%' | Set-Content -Encoding Default '%LOGDIR%\pet.out.gbk.log'" >nul 2>nul
+set "GBK=%LOGDIR%\pet.out.gbk.log"
 
 echo.
 echo ==================== 自检（看不到桌宠时把这一段发出去）====================
@@ -202,19 +219,22 @@ echo [1] 进程（有输出=活着；活着却看不到她 = 位置/渲染问题）:
 tasklist /fi "imagename eq presage-pet.exe" 2>nul | findstr /i "presage-pet.exe"
 echo.
 echo [2] 托盘注册结果:
-findstr /c:"Shell_NotifyIcon" "%LOGDIR%\pet.out.gbk.log" 2>nul
+findstr /c:"Shell_NotifyIcon" "%GBK%" 2>nul
 echo.
-echo [3] 关键状态（几何自检里 裁掉=0 / 出屏=0 才算正常）:
-findstr /c:"source=" /c:"boot ok" /c:"BOOT-FAILED" /c:"REJECT" /c:"外观 " /c:"提权" "%LOGDIR%\pet.out.gbk.log" 2>nul
+echo [3] 关键状态（几何自检里 裁掉=0 / 出屏=0 / 气泡出框=0 才算正常）:
+findstr /c:"source=" /c:"boot ok" /c:"BOOT-FAILED" /c:"REJECT" /c:"外观 " /c:"提权" "%GBK%" 2>nul
 echo.
 echo [4] 几何 / 素材 / 报错:
-findstr /c:"[geom:" /c:"hitmask" /c:"ERROR" "%LOGDIR%\pet.out.gbk.log" 2>nul
+findstr /c:"[geom:" /c:"hitmask" /c:"ERROR" "%GBK%" 2>nul
 echo.
 echo [5] pet.err.log 末尾:
-if exist "%LOGDIR%\pet.err.log" powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-  "if ((Get-Item '%LOGDIR%\pet.err.log').Length -gt 0) { Get-Content -Encoding UTF8 -Tail 12 '%LOGDIR%\pet.err.log' } else { '(空)' }"
+set "ERRLOG=%LOGDIR%\pet.err.log"
+if not exist "%ERRLOG%" if exist "%V1RUNTIME%\pet.err.log" set "ERRLOG=%V1RUNTIME%\pet.err.log"
+if exist "%ERRLOG%" powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+  "if ((Get-Item '%ERRLOG%').Length -gt 0) { Get-Content -Encoding UTF8 -Tail 12 '%ERRLOG%' } else { '(空)' }"
 echo.
-echo 完整日志: %LOGDIR%\pet.out.log
+echo 完整日志: %LOGFILE%
+echo （总是可读的那一份: %%LOCALAPPDATA%%\PresagePet\pet.log）
 echo ============================================================================
 if "%WANT_DIAG%"=="1" (
   echo.
@@ -226,7 +246,18 @@ ping -n 14 127.0.0.1 > nul
 exit /b 0
 
 rem ---------------------------------------------------------------------------
+rem  子过程
+rem ---------------------------------------------------------------------------
 :launch_once
-del /q "%LOGDIR%\pet.out.log" "%LOGDIR%\pet.err.log" >nul 2>nul
-start "" /b /d "%PETDIR%" "%PET%"
+start "" /b "%PET%"
+exit /b 0
+
+rem  在两个候选目录里轮询 pet.out.log，找到就把**带引号**的路径写进 LOGFILE
+:findlog
+set "LOGFILE="
+for /l %%i in (1,1,12) do (
+  if not defined LOGFILE if exist "%LOGDIR%\pet.out.log" set "LOGFILE="%LOGDIR%\pet.out.log""
+  if not defined LOGFILE if exist "%V1RUNTIME%\pet.out.log" set "LOGFILE="%V1RUNTIME%\pet.out.log""
+  if not defined LOGFILE ping -n 2 127.0.0.1 > nul
+)
 exit /b 0

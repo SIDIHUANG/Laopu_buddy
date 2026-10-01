@@ -41,16 +41,24 @@ const send = (method, params = {}) => new Promise((res) => {
 const expr = `(async () => {
   const P = window.PresagePet;
   if (!P) return 'no PresagePet';
-  await P.applyAppearanceFromSettings(JSON.stringify({ size: ${size} }));
-  await new Promise((r) => setTimeout(r, 800));
+  if (${Number.isFinite(size)}) {
+    await P.applyAppearanceFromSettings(JSON.stringify({ size: ${size} }));
+    await new Promise((r) => setTimeout(r, 800));
+  }
   const hit = document.getElementById('pet-hit').getBoundingClientRect();
   const list = document.getElementById('bubble-list').getBoundingClientRect();
+  const menu = document.getElementById('ctx-menu');
+  const wasHidden = menu.hidden;
+  menu.hidden = false;
+  const mr = menu.getBoundingClientRect();
+  menu.hidden = wasHidden;
   return JSON.stringify({
     size: ${size},
     win: [innerWidth, innerHeight],
     petTop: Math.round(hit.top), petBottomFromWinBottom: Math.round(innerHeight - hit.bottom),
     clipped: Math.max(0, Math.round(-hit.top)) + Math.max(0, Math.round(hit.bottom - innerHeight)),
     bubbleTop: Math.round(list.top),
+    menu: [Math.round(mr.width), Math.round(mr.height)],
   });
 })()`;
 

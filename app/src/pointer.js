@@ -56,6 +56,32 @@ const ALPHA_THRESHOLD = 24;
 const REFRESH_MS = 500;
 const POS_KEY = 'presage-pet.position';
 
+/**
+ * 算右键菜单该放哪。
+ *
+ * 为什么需要它：桌宠窗口只比"角色 + 一点余量"大一点（宽 = 角色显示宽度 + 140，
+ * 高 = 角色实际占高 + 气泡区），而右键菜单本身约有 150px 高。v1.1 之前这里只有
+ * `Math.min(e.clientX, innerWidth - 140)` 这种**写死常量**的夹取，于是：
+ *   * 在最矮的窗口尺寸下，菜单底部会超出窗口 → 被窗口裁掉
+ *     （用户实测："在小人不同高度右键会影响选项栏是否完全呈现"）；
+ *   * 常量 140/120 和菜单真实尺寸（约 140x150）对不上，右边也会被切。
+ *
+ * 规则：优先放在光标右下方；下方放不下就翻到上方；两个轴最后都夹进窗口。
+ * 抽成纯函数是为了能单测（见 app/test/logic.test.mjs）。
+ */
+export function placeMenu(cursorX, cursorY, menuW, menuH, winW, winH, margin = 4) {
+  const maxX = Math.max(margin, winW - menuW - margin);
+  const maxY = Math.max(margin, winH - menuH - margin);
+  let x = cursorX;
+  if (x + menuW + margin > winW) x = cursorX - menuW; // 右边放不下 → 翻到左边
+  let y = cursorY;
+  if (y + menuH + margin > winH) y = cursorY - menuH; // 下面放不下 → 翻到上面
+  return {
+    x: Math.min(Math.max(x, margin), maxX),
+    y: Math.min(Math.max(y, margin), maxY),
+  };
+}
+
 /** 前端诊断信息 → native stdout（＝ runtime/pet.out.log）。页面没有别的可读输出通道。 */
 export function frontLog(msg) {
   if (isTauri) {
@@ -322,12 +348,37 @@ export class PointerBridge {
   attachContextMenu() {
     const menu = document.getElementById('ctx-menu');
     if (!menu) return;
-    const hide = () => { menu.hidden = true; this.invalidate(); };
+    // 菜单高度是常量（5 个按钮），量一次就够；量到 0 时不要缓存
+    let menuH = 0;
+    const hide = () => {
+      if (menu.hidden) return;
+      menu.hidden = true;
+      this.invalidate();
+      this.onMenuClose?.();
+    };
+    /**
+     * 量出菜单真实尺寸后摆位。
+     * 必须在 `hidden = false` 之后读：display:none 时量到的是 0。
+     * 再在下一帧量一次并重摆 —— 字体/缩放/多语言都可能让它在首帧后才定下来。
+     */
+    const place = (clientX, clientY) => {
+      const w = menu.offsetWidth || 140;
+      const h = menu.offsetHeight || 150;
+      if (menu.offsetHeight > 0) menuH = menu.offsetHeight;
+      const { x, y } = placeMenu(clientX, clientY, w, h, window.innerWidth, window.innerHeight);
+      menu.style.left = `${x}px`;
+      menu.style.top = `${y}px`;
+    };
     document.addEventListener('contextmenu', (e) => {
       e.preventDefault();
       menu.hidden = false;
-      menu.style.left = `${Math.min(e.clientX, window.innerWidth - 140)}px`;
-      menu.style.top = `${Math.min(e.clientY, window.innerHeight - 120)}px`;
+      place(e.clientX, e.clientY);
+      // 通知上层撑开窗口：菜单比窗口空档还高时，必须先把窗口做高（见 main.js）
+      this.onMenu?.(menuH || menu.offsetHeight || 160);
+      requestAnimationFrame(() => {
+        place(e.clientX, e.clientY);
+        this.invalidate();
+      });
       this.invalidate();
     });
     document.addEventListener('click', (e) => {

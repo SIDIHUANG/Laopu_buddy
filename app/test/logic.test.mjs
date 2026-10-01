@@ -8,6 +8,10 @@ import { Arbiter } from '../src/arbiter.js';
 import { BubbleQueue, BUBBLE } from '../src/bubbles.js';
 import { SpriteLibrary } from '../src/assets.js';
 import { PetRenderer } from '../src/renderer.js';
+import { placeMenu } from '../src/pointer.js';
+import {
+  windowSizeFor, CONTENT_SCALE, MARGIN, BUBBLE_SPACE, maxSizeForScreen,
+} from '../src/appearance.js';
 
 let passed = 0;
 const cases = [];
@@ -490,6 +494,62 @@ test('有工具在跑时不会打瞌睡（长任务跑到 5 分钟也不该睡�
   const snap = a.resolve(400_000);
   assert.equal(snap.anim, 'working', '整段时间都该是 working');
   assert.notEqual(snap.anim, 'doze');
+});
+
+// ------------------------------------------------- 右键菜单摆位 + 窗口尺寸
+test('右键菜单必须完整落在窗口内（用户实测：不同高度右键会被切）', () => {
+  // 真实数值：桌宠窗口在 size=200 时是 340x312；菜单实测约 140x150。
+  const winW = 340; const winH = 312;
+  const menuW = 140; const menuH = 150;
+  const inside = (x, y, label) => {
+    assert.ok(x >= 0 && y >= 0, `${label}: 菜单跑到窗口左上角外面 (${x},${y})`);
+    assert.ok(x + menuW <= winW, `${label}: 菜单右边被切 (x=${x}, x+w=${x + menuW} > ${winW})`);
+    assert.ok(y + menuH <= winH, `${label}: 菜单下面被切 (y=${y}, y+h=${y + menuH} > ${winH})`);
+  };
+  // 覆盖整条对角线：小人头顶附近 → 脚底附近
+  for (let cy = 0; cy <= winH; cy += 10) {
+    for (let cx = 0; cx <= winW; cx += 20) {
+      const p = placeMenu(cx, cy, menuW, menuH, winW, winH);
+      inside(p.x, p.y, `cursor=(${cx},${cy})`);
+    }
+  }
+  // 下方放不下时应该翻到光标上方
+  const low = placeMenu(100, 300, menuW, menuH, winW, winH);
+  assert.ok(low.y + menuH <= winH, '贴近底边时菜单必须翻上去');
+  // 右边放不下时应该翻到光标左侧
+  const right = placeMenu(330, 40, menuW, menuH, winW, winH);
+  assert.ok(right.x + menuW <= winW, '贴近右边时菜单必须翻到左侧');
+  // 常规情况：就在光标右下
+  assert.deepEqual(placeMenu(40, 40, menuW, menuH, winW, winH), { x: 40, y: 40 });
+});
+
+test('窗口必须装得下角色 + 气泡；装不下右键菜单时靠"临时撑开"解决', () => {
+  // v1.1 第一版把"窗口要装得下菜单"当成前提，发现 size=320 时窗口只剩 104px
+  // 空档、而菜单约 160px —— 物理上装不下。与其把窗口永久做高（背影区一大片空，
+  // 点击穿透也更难判断），不如**需要时才撑开**（main.js 的 anchorWindow）。
+  // 所以这里锁两件事：
+  //   1) 基础窗口必须装得下角色 + 气泡；
+  //   2) 撑开公式算出的高度必须装得下菜单，且在屏幕可用高度之内。
+  const MENU_H = 160;
+  const scr = { availWidth: 1280, availHeight: 752 };
+  for (const size of [80, 120, 200, 320, 480]) {
+    const { h } = windowSizeFor(size, scr);
+    const charH = size * CONTENT_SCALE;
+    const feet = size * MARGIN;
+    // 取整会差几像素，留 24px 容差（实测 BUBBLE_SPACE=116 时各国尺寸都是 96~116）
+    assert.ok(h - charH - feet >= BUBBLE_SPACE - 24,
+      `size=${size}: 基础窗口只剩 ${Math.round(h - charH - feet)}px 给气泡`);
+    // 撑开后：角色 + 脚底 + 菜单 + 边距
+    const grown = Math.min(Math.round(charH + feet + MENU_H + 16), scr.availHeight - 8);
+    assert.ok(grown - charH - feet >= MENU_H - 8,
+      `size=${size}: 撑开后仍装不下菜单（${Math.round(grown - charH - feet)}px < ${MENU_H}px）`);
+    assert.ok(grown <= scr.availHeight,
+      `size=${size}: 撑开后超出屏幕（${grown} > ${scr.availHeight}）`);
+  }
+  // 尺寸上限不能超过屏幕：v1 允许 480 而窗口高 845px，脚永远在屏幕外
+  assert.equal(maxSizeForScreen({ availWidth: 1280, availHeight: 752 }), 480);
+  assert.ok(maxSizeForScreen({ availWidth: 1024, availHeight: 600 }) < 480,
+    '小屏上必须把尺寸压下来，否则角色会被屏幕裁掉');
 });
 
 // ---------------------------------------------------------------- run

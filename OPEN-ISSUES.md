@@ -88,7 +88,7 @@ python tools\see_pet.py --out runtime\shot.png   # 肉眼看整只都在
 * 日志里那个恒为 `0.0s` 的"上一状态持续"改成仲裁器给的 `heldMs`
   （日志现在是 `持续 0.8s/0.8s`）。
 
-**测试**：`app/test/logic.test.mjs` 新增 3 条（47 项全绿），其中
+**测试**：`app/test/logic.test.mjs` 新增 3 条（现共 119 项全绿），其中
 「事件把状态反复打断时，动画必须稳定在一个值上」就是照着用户日志复现的。
 
 ### 0.4 启动器重写（"测试里能启动、双击 bat 就失败"）
@@ -294,8 +294,8 @@ $env:PYTHONIOENCODING = "utf-8"      # 否则 build_web.py 在 GBK 控制台报�
 python tools\build_web.py            # 前端语法门禁 + 装配 app/dist
 cd app\src-tauri; cargo build --release   # 约 1 分钟（release 必须重跑，前端是编进 exe 的）
 
-# 测试（112 → 115 项，全绿）
-node app\test\logic.test.mjs        # 47
+# 测试（112 → 119 项，全绿）
+node app\test\logic.test.mjs        # 50
 node app\test\codex.test.mjs        # 19
 node app\test\interactions.test.mjs # 11
 node app\test\dsh.test.mjs          # 13

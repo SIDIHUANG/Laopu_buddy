@@ -137,25 +137,49 @@ v1 的启动器有两个结构性毛病：
 
 **事实记录（供以后需要时接手）**：
 
-| 证据 | 值 |
-|---|---|
-| `NIM_ADD` 不带图标的最小注册 | `ok=0 err=5`（ACCESS_DENIED） |
-| 窗口站 / 桌面 | `WinSta0` / `Default`（与 Explorer 一致） |
-| 提权 | `[env] 提权=否` —— **已排除提权** |
-| 用户自己双击 bat 的会话 | 同样 `err=5`（本次实测确认） |
-| 图标句柄 / 结构体 | 句柄有效（exe 资源 id=32512）、`cbSize=976`、已 `SetLastError(0)` |
+| 证据 | 值 | 说明 |
+|---|---|---|
+| `NIM_ADD` 不带图标的最小注册 | `ok=0 err=5`（ACCESS_DENIED） | 桌宠日志，你自己的会话里也一样 |
+| 窗口站 / 桌面 | `WinSta0` / `Default` | 与 Explorer 一致，**排除**窗口站假设 |
+| 提权 | `[env] 提权=否` | **排除**提权 |
+| 图标句柄 / 结构体 | 句柄有效（exe 资源 id=32512）、`cbSize=976`、已 `SetLastError(0)` | 排除句柄/尺寸 |
+| **我的沙箱会话里 `explorer.exe` 数量** | **0** | ⚠️ 见下 |
 
-**如果以后要接着查**（按性价比排序）：
-1. 写一个 **30 行最小 exe**（只调 `Shell_NotifyIcon`，不带 Tauri/WebView2）在用户机上跑 ——
-   若它也 `err=5`，即可确认与本项目无关；
-2. 查安全软件 / `gpedit.msc → 用户配置 → 管理模板 → 开始菜单和任务栏`、
-   `HKCU\Control Panel\NotifyIconSettings`；
-3. 换一个 Windows 本地账户试同一 exe。
+### 🔑 一个把之前的结论全部推翻的发现
 
-> ⚠️ 一条被本轮推翻的旧结论：v1 文档里那句"用户双击时托盘注册成功（`ok=1 err=0`）"
-> **不可信** —— 那是从 `%LOCALAPPDATA%\PresagePet\pet.log` 读到的，而沙箱里的进程
-> 写不了那个目录，读到的是更早一次、由 agent 启动的记录。
-> 教训：**先确认读到的是哪一次运行的日志**，再看结论。
+**我这个沙箱会话里根本没有 `explorer.exe`**（shell 不在），
+所以"托盘注册被拒"在我这边是**必然**的 —— `Shell_NotifyIcon` 需要通知区宿主，
+没有 shell 就返回 ACCESS_DENIED。用 `tools/tray_min_probe.ps1`（只调
+`Shell_NotifyIconW`，不带 Tauri/WebView2）在本会话实测同样是 `err=5`。
+
+**这意味着**：v1 文档里所有"我在沙箱里测到 `err=5`，所以是环境问题"的推理，
+只能证明**我的会话**没有 shell，**不能**直接推广到你的会话。这条得撤回到"未定性"。
+
+**但同时发现一条反向证据**：`HKCU\Control Panel\NotifyIconSettings` 里存在
+
+```
+子项 8587569681505809175
+  ExecutablePath : …\laopu_ds\v1\presage-pet.exe
+  InitialTooltip : 普瑞塞斯 · 桌宠
+```
+
+这个键**只在 `Shell_NotifyIcon(NIM_ADD)` 成功时**才会被 shell 写入。
+也就是说：**这台机器上至少成功注册过一次**。所以你"看不到图标"更可能是
+**被收进了隐藏区（任务栏那个 `^` 里）**，而不是注册失败。
+
+**请你确认两件事（各 10 秒）**：
+1. 任务管理器里 `explorer.exe` 是否在跑（进程名就写 `explorer.exe`）；
+2. 点任务栏的 `^`（显示隐藏的图标）—— 普瑞塞斯的图标是不是在那儿。
+
+（如果确实在隐藏区：那"托盘不可用"这件事就已经解决了 —— 把它的图标拖到任务栏
+可见区即可，`IsPromoted` 那个值就是干这个的。）
+
+**如果确认 Explorer 在跑、隐藏区里也没有**，再按下面排序排查：
+1. 安全软件 / `gpedit.msc → 用户配置 → 管理模板 → 开始菜单和任务栏`；
+2. `HKCU\Software\Microsoft\Windows\CurrentVersion\Policies\Explorer` 里的
+   `NoTrayItemsDisplay` 之类的项（本次检查过：**没有**这类策略）；
+3. 换一个 Windows 本地账户试同一 exe；
+4. 重启 explorer.exe 后再启动一次桌宠。
 
 ### 1.2 抠图残留（手臂与身体之间的浅灰缝）
 

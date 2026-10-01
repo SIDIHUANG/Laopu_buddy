@@ -1,42 +1,44 @@
 @echo off
 rem ============================================================================
-rem  普瑞塞斯桌宠 · v1.1 启动器（**唯一实现**；v1\ 里那份只负责转发到这里）
+rem  普瑞塞斯桌宠 · v1.1 启动器（**唯一实现**，工程根目录版）
 rem
-rem  这份启动器只做四件事，每一件都是被真实故障逼出来的：
+rem  包内版（v1\启动桌宠.bat）由 tools/pack_v1.ps1 从这份生成，两者只差三处：
+rem    PETDIR 指向包自身 / 日志候选 2 / 只对工程版成立的注释。
+rem  别手工维护两份逻辑 —— v1 时期就是这么漂移出 bug 的。
 rem
-rem  1) 用 `start "" /b exe` 直接启动，不经过 PowerShell。
-rem     为什么：老版本用 `powershell -Command Start-Process ... -RedirectStandardOutput`
-rem     启动，进程树里多了一层 powershell.exe。用户双击时能看到控制台一闪，
-rem     桌宠跟着抖动甚至不再绘制（多一层进程抢前台/抢合成）。直接 start 的
-rem     进程树里只有桌宠自己，和"手动双击 exe"完全一致。
+rem  这份启动器做五件事，每一件都是被真实故障逼出来的：
 rem
-rem  2) 用一个**固定的、可自愈的** profile 目录：runtime\webview2
-rem     为什么要固定：WebView2 的 profile 一旦被写坏（进程被强杀、磁盘满、
-rem     断电），之后每次启动都会以 HRESULT 0x8000FFFF「灾难性故障」直接失败，
-rem     用户看到的就是"双击后闪一下就没、日志里什么都没有"。
-rem     所以这里：
-rem       a) 若上一轮留下了失败标记 (.boot-failed)，先把旧 profile 整个删掉；
-rem       b) 启动后 12 秒内进程不在，就判定这次启动失败，删掉 profile 再试一次。
-rem     这样用户永远不用手工删目录。要干净对比请传 -IsolateProfile。
+rem  1) 自定位校验。%~dp0 是"本文件所在目录"，正常一定对；但被 `call` 从别的
+rem     目录按绝对路径调起来时，历史上出现过它解析成**调用方目录**（实测变成
+rem     C:\Windows\），于是 PETDIR 跟着错、跑去 C:\Windows 找 exe，
+rem     报的错还完全指错方向。所以这里先判别，再往下走。
 rem
-rem  3) 不需要管理员权限，也不依赖任何环境变量 / 工作目录 / PATH。
-rem     所有路径都由 %~dp0 推导，所以「双击 bat / 快捷方式 / 计划任务 /
-rem     从任意目录 cmd 调用」四种方式行为一致。提权会同时打掉托盘注册
-rem     和 WebView2 合成（历史问题 1 与 2），所以下面显式提示不要提权。
+rem  2) 用 `start "" /b exe` 直接启动，不经过 PowerShell。老版本用
+rem     `powershell -Command Start-Process ... -RedirectStandardOutput`，
+rem     进程树里多一层 powershell.exe，用户双击时控制台一闪、桌宠跟着抖动。
+rem     直接 start 的进程树里只有桌宠自己，和"手动双击 exe"完全一致。
 rem
-rem  4) 启动后自检，并把日志转成 GBK 打印（UTF-8 直出在 cmd 里是花屏）。
-rem     看不到桌宠时，把这一段整块发出去就能定位，不用再靠截图猜。
+rem  3) 固定的、可自愈的 WebView2 profile（runtime\webview2）。
+rem     profile 一旦被写坏（进程被强杀/磁盘满/断电），之后每次启动都会以
+rem     HRESULT 0x8000FFFF「灾难性故障」直接失败 —— 用户看到"闪一下就没、
+rem     日志空白"。所以：有 .boot-failed 标记就先删 profile；启动后 12 秒进程
+rem     不在就判定失败，删掉 profile 再试一次。用户永远不用手工删目录。
+rem
+rem  4) 不依赖任何环境变量 / 工作目录 / PATH，也不要管理员权限。
+rem     提权会同时打掉托盘注册与 WebView2 合成，所以下面明确提示不要提权。
+rem
+rem  5) 启动后自检，并把日志转成 GBK 打印（UTF-8 直出在 cmd 里是花屏）。
+rem     看不到桌宠时，把这一段整块发出去就能定位，不用靠截图猜。
 rem
 rem  已知坑（别改回去）：
 rem    * 不要用 `timeout /t` —— stdin 被重定向时它会直接中断整个批处理；
 rem      用 `ping -n N 127.0.0.1 >nul` 代替。
-rem    * 不要用 `chcp 65001` —— 本文件用系统代码页（GBK）保存，
-rem      两者不一致时中文全是乱码。
+rem    * 不要用 `chcp 65001` —— 本文件用系统代码页（GBK）保存，会全乱码。
 rem    * 缺 WebView2Loader.dll 会让双击 exe **静默秒退**（0xC0000135），
-rem      所以第 1 步必须替用户查出来。
-rem    * **不要假设日志一定在 %LOGDIR%** —— 桌宠是往"自己的当前目录\runtime\
-rem      pet.out.log"写的，某些调用方式下工作目录会变成 v1\，日志就落到
-rem      v1\runtime\。v1.1 第一版因此让自检段 [2]~[5] 全是空的（用户实测抓到），
+rem      所以第 2 步必须替用户查出来。
+rem    * **不要假设日志一定在 %LOGDIR%** —— 桌宠往"自己的当前目录\runtime\
+rem      pet.out.log"写，某些调用方式下工作目录会变成 v1\，日志就落到
+rem      v1\runtime\。v1.1 第一版因此让自检段 [2]~[5] 全空（用户实测抓到），
 rem      所以下面用 :findlog 在两个候选目录里轮询。
 rem    * node 不能只认 DSH 自带的那份 —— 必须回落到 PATH 上的 node。
 rem ============================================================================
@@ -56,21 +58,24 @@ shift
 goto parse_args
 :args_done
 
+rem %~dp0 末尾自带反斜杠
 set "ROOT=%~dp0"
 set "PETDIR=%ROOT%v1"
 if not exist "%PETDIR%\presage-pet.exe" set "PETDIR=%ROOT%"
 set "PET=%PETDIR%\presage-pet.exe"
-rem 注意：%ROOT% 末尾**自带**反斜杠，所以这里是 %ROOT%v1 而不是 %ROOT%\v1。
-rem 写成 %PETDIR%runtime 会得到 "…\v1runtime"（少一个反斜杠）—— v1.1 第二版踩过。
 set "V1RUNTIME=%ROOT%v1\runtime"
 
 rem ---------------------------------------------------------------------------
-rem  1. 文件齐全性
+rem  1. 自定位校验 + 文件齐全性
 rem ---------------------------------------------------------------------------
 if not exist "%PET%" (
   echo [x] 找不到 presage-pet.exe
-  echo     应该在: %PET%
-  echo     请确认交付包完整（presage-pet.exe / WebView2Loader.dll / 启动桌宠.bat）。
+  echo     脚本所在目录 : %ROOT%
+  echo     期望 exe     : %PET%
+  echo     当前目录     : %CD%
+  echo     如果"期望 exe"看起来不像本文件旁边的路径，说明 %%~dp0 没解析对：
+  echo     请改为**双击**本文件，或先 cd 到它所在目录再执行。
+  echo     另外请确认交付包完整（presage-pet.exe / WebView2Loader.dll / 启动桌宠.bat）。
   pause
   exit /b 1
 )
@@ -171,8 +176,6 @@ del /q "%LOGDIR%\pet.out.log" "%LOGDIR%\pet.err.log" >nul 2>nul
 del /q "%V1RUNTIME%\pet.out.log" "%V1RUNTIME%\pet.err.log" >nul 2>nul
 echo [i] 正在启动...
 
-rem /b = 不新建窗口；路径后不加东西 = 不等待。批处理随后自己退出，
-rem 桌宠就是独立进程（和双击 exe 一样，不会有父控制台在退出时把它带走）。
 call :launch_once
 ping -n 13 127.0.0.1 > nul
 

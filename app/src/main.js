@@ -45,7 +45,18 @@ const BUBBLE_TEXT = {
     : null),
 };
 
-async function boot() {
+/**
+ * 启动。
+ *
+ * 导出 `boot` 是给**测试**用的（app/test/boot.test.mjs 会用最小 DOM 桩把它真跑一遍）。
+ * 生产加载方式是 index.html 里的 `<script type="module" src="src/main.js">`，
+ * 页面不会有任何东西 import 它，所以这里直接自调用的副作用依然是"加载即启动"。
+ *
+ * 为什么值得为测试开这个口子：本项目被 TDZ（`let/const` 在声明行之前被访问）
+ * 咬过三次，症状都是"启动即白屏"，而纯函数单测**抓不到** —— 它们只 import
+ * 模块、不跑 boot()。有了这个导出，boot.test.mjs 才能把整条启动链跑一遍。
+ */
+export async function boot() {
   const params = new URLSearchParams(location.search);
   const debug = params.get('debug') === '1';
   /**
@@ -68,6 +79,29 @@ async function boot() {
   const viewMode = winLabel === 'settings' || params.get('view') === 'settings';
   if (viewMode) document.body.classList.add('settings-window');
   frontLog(`窗口角色：label=${winLabel || '(浏览器)'} viewMode=${viewMode}`);
+
+  /**
+   * ---------- 跨模块共享的状态：**必须声明在 boot 最前面** ----------
+   *
+   * 为什么集中放这里：这是一个函数体，`let/const` 有 TDZ —— 声明行之前的任何
+   * 访问都会抛 `Cannot access 'X' before initialization`，而不是拿到 undefined。
+   * 而 boot 的中间会把回调/对象交给别的模块（例如 `new SettingsPanel({...})`
+   * 里就放了 `usageBroadcast: { get: () => usageBroadcastEnabled }`），
+   * 这些闭包**在 boot 跑完之前就可能被调用**。
+   *
+   * 这个坑本项目犯过三次，而且每次的表现都不一样：
+   *   * 外观（appearance）→ 启动即白屏
+   *   * 台词库（lines）→ TDZ
+   *   * **用量播报（usageBroadcastEnabled）→ 只有"独立设置窗口"那条路径会崩**
+   *     （因为设置窗口一打开就去读它），表现为设置面板一片空白 + 报
+   *     "连不上桥接进程（Cannot access 'usageBroadcastEnabled' before initialization）"。
+   * 所以规则很简单：**凡是会被"更早执行的东西"读到的状态，一律提前声明。**
+   */
+  let usageBroadcastEnabled = localStorage.getItem('presage-pet.usageBroadcast') !== '0';
+  let usageTimer = null;
+  let lastClickLineAt = 0;
+  const usageByProvider = new Map();
+  const USAGE_BROADCAST_KEY = 'presage-pet.usageBroadcast';
 
   // 数据源配置必须在最前面定下来：后面的设置页、指针桥、事件源都要用 bridgeUrl。
   // （之前把它写在几百行之后，设置页引用时触发 TDZ，整个前端直接不启动。）
@@ -594,12 +628,7 @@ async function boot() {
   const LOW_BALANCE = { threshold: 5, repeatMs: 30 * 60_000 };
   /** 随机用量播报的间隔区间：太频繁会烦，太稀疏就失去意义 */
   const USAGE_BROADCAST = { minMs: 15 * 60_000, maxMs: 40 * 60_000 };
-  const USAGE_BROADCAST_KEY = 'presage-pet.usageBroadcast';
   let lowBalanceWarnedAt = 0;
-  let lastClickLineAt = 0;
-  let usageTimer = null;
-  const usageByProvider = new Map();
-  let usageBroadcastEnabled = localStorage.getItem(USAGE_BROADCAST_KEY) !== '0';
 
   function pushLine(category, kind, text, agent = 'presage') {
     const line = lines.pick(category);
@@ -1177,9 +1206,15 @@ class DemoSource {
   }
 }
 
-boot().catch((e) => {
-  // 启动失败必须进日志 —— 之前这里只写 DOM，结果 native 日志一片空白，
-  // 桌面窗口"什么都没有"却查不出原因（实测被这个坑了很久）。
-  frontLog(`BOOT-FAILED ${(e && (e.stack || e.message)) || JSON.stringify(e) || String(e)}`);
-  document.body.innerHTML = `<pre style="color:#c00;font:12px monospace">启动失败: ${e.message}</pre>`;
-});
+// 自启动：真实页面里 index.html 直接加载本模块，所以"加载即启动"。
+// 测试（app/test/boot.test.mjs）会先把 `window.__PRESAGE_NO_AUTOBOOT__` 设成 true
+// 再 import，这样它可以自己控制 `boot()` 的调用时机与次数
+// —— 否则测试里 boot() 会被跑两遍（import 一次 + 显式一次），日志重复、结论也不干净。
+if (!(typeof window !== 'undefined' && window.__PRESAGE_NO_AUTOBOOT__)) {
+  boot().catch((e) => {
+    // 启动失败必须进日志 —— 之前这里只写 DOM，结果 native 日志一片空白，
+    // 桌面窗口"什么都没有"却查不出原因（实测被这个坑了很久）。
+    frontLog(`BOOT-FAILED ${(e && (e.stack || e.message)) || JSON.stringify(e) || String(e)}`);
+    document.body.innerHTML = `<pre style="color:#c00;font:12px monospace">启动失败: ${e.message}</pre>`;
+  });
+}

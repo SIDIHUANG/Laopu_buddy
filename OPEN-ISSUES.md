@@ -88,7 +88,7 @@ python tools\see_pet.py --out runtime\shot.png   # 肉眼看整只都在
 * 日志里那个恒为 `0.0s` 的"上一状态持续"改成仲裁器给的 `heldMs`
   （日志现在是 `持续 0.8s/0.8s`）。
 
-**测试**：`app/test/logic.test.mjs` 新增 3 条（现共 119 项全绿），其中
+**测试**：`app/test/logic.test.mjs` 新增 3 条（现共 121 项全绿），其中
 「事件把状态反复打断时，动画必须稳定在一个值上」就是照着用户日志复现的。
 
 ### 0.4 启动器重写（"测试里能启动、双击 bat 就失败"）
@@ -209,6 +209,49 @@ v1 的启动器有两个结构性毛病：
 `target/release/build/*/out/tauri-codegen-assets/` 里的资产是否比 `app/dist` 新，
 并明确打印"✓ 前端已被编进 exe"或"⚠ 前端比 exe 新，请重新 cargo build"。
 （另外注意：build 目录里有**多个**指纹目录，别只读一个 —— 我也差点被一个旧的骗了。）
+### 0.8 修完 0.7 之后暴露的 TDZ（v1.1 第七轮）
+
+现象（用户截图）：设置窗口能开了，但面板一片空白，顶部红字写着
+「连不上桥接进程（**Cannot access 'usageBroadcastEnabled' before initialization**）」。
+
+**为什么"修好设置窗口"之后才暴露**：在这之前设置窗口的 `viewMode` 恒为 false，
+走的是"桌宠窗口"那条路；改按 Tauri label 识别之后，它才第一次真正走进
+"独立设置窗口"分支 —— 而那个分支才会去读 `usageBroadcastEnabled`。
+
+**根因**：`main.js` 的 `boot()` 是个函数体，`let/const` 有 TDZ。
+`new SettingsPanel({ usageBroadcast: { get: () => usageBroadcastEnabled } })` 把闭包
+交给了设置面板，而**设置面板一打开就去读它** —— 那时声明行还没执行到。
+
+**本项目被这个坑咬了三次**（每次表现都不一样，所以更难发现）：
+
+| 受害者 | 表现 |
+|---|---|
+| `appearance` | 启动即白屏 |
+| `lines` | TDZ |
+| `usageBroadcastEnabled` | **只有"独立设置窗口"这条路径崩**，表现为设置面板空白 + 上面那句红字 |
+
+**修法**：在 `boot()` 最前面集中声明"会被更早执行的东西读到的状态"
+（`usageBroadcastEnabled` / `usageTimer` / `lastClickLineAt` / `usageByProvider` /
+`USAGE_BROADCAST_KEY`），并写明规则：**凡是被更早执行的东西读到的状态，一律提前声明。**
+
+#### 为此新增 `app/test/boot.test.mjs`：真的把 boot() 跑一遍
+
+纯函数单测**抓不到 TDZ**（它们只 import 模块、不跑 boot）。所以新增一个用最小
+DOM/window 桩把 `boot()` 真跑一遍的测试。这里有个很值得记的过程：
+
+1. 第一版测试只跑默认路径（label 拿不到 → `viewMode=false`）→ **把 bug 放回去它照样通过**。
+   我特意做了这个"把 bug 放回去"的验证，才发现测试是装饰品。
+2. 第二版模拟了 `label=settings`，但只在 `boot()` 外面看有没有抛错 —— 还是抓不到，
+   因为 **TDZ 是在 `boot()` 返回之后、`settings.open() → refresh()` 那一段抛的**。
+3. 第三版才发现关键：`refresh()` 把任何异常都 **catch 成状态文字**
+   （`连不上桥接进程（${e.message}）`），所以它**不以未捕获异常的形式出现** ——
+   必须去读 `#settings-status` 的文字。
+
+最终判据 = 「设置面板状态文字里不含 `before initialization` / `Cannot access`」。
+实测：修好的代码 2/2 通过；把 bug 精确复原后**必然失败**，且失败信息就是用户截图里那句。
+
+这条经验值得推广：**"测试通过"不等于"测试有效"** —— 写完测试要把 bug 放回去验一次，
+确认它真的会红。
 ## 1. 🟡 仍未解决（按用户决定处理）
 
 ### 1.1 【已降级为已知限制】托盘图标不出现（`Shell_NotifyIcon` → `ACCESS_DENIED`）
@@ -313,7 +356,7 @@ $env:PYTHONIOENCODING = "utf-8"      # 否则 build_web.py 在 GBK 控制台报�
 python tools\build_web.py            # 前端语法门禁 + 装配 app/dist
 cd app\src-tauri; cargo build --release   # 约 1 分钟（release 必须重跑，前端是编进 exe 的）
 
-# 测试（112 → 119 项，全绿）
+# 测试（112 → 121 项，全绿）
 node app\test\logic.test.mjs        # 50
 node app\test\codex.test.mjs        # 19
 node app\test\interactions.test.mjs # 11

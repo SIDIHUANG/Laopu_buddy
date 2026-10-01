@@ -134,7 +134,7 @@ python tools\build_web.py
 $env:Path = "$env:USERPROFILE\.mingw64\mingw64\bin;$env:USERPROFILE\.cargo\bin;" + $env:Path
 cd app\src-tauri; cargo build
 
-# 测试（112 项，全绿）
+# 测试（119 项，全绿）
 node app\test\logic.test.mjs        # 43
 node app\test\codex.test.mjs        # 19
 node app\test\interactions.test.mjs # 11

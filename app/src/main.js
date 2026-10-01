@@ -1040,14 +1040,25 @@ async function boot() {
     interactions, playTransient, pointer, selfTest, settings,
     broadcastUsage, setUsageBroadcast, openSettingsView,
     /**
-     * native 侧让页面显示一条**常驻提示**（目前只有"托盘被系统拒绝"用）。
+     * native 侧让页面显示一条提示（目前只有"托盘被系统拒绝"用）。
      *
      * 为什么需要：托盘图标是 v1 里唯一的可靠入口，而它在这台机器上被
      * ACCESS_DENIED 拒掉。托盘没了，用户就只剩"右键角色"这一条路，
      * 但他并不知道 —— 所以要有人主动告诉他，而不是让他去找一个不存在的小图标。
+     *
+     * 但**只说一次**（同一个 profile 里记住已提示过）：托盘不可用是这台机器的
+     * 长期状态，每次启动都弹一遍就变成骚扰了（用户明确要求）。
      */
     notice: (text) => {
       if (!text) return false;
+      const KEY = 'presage-pet.tray-notice-shown';
+      let shown = false;
+      try { shown = localStorage.getItem(KEY) === '1'; } catch { /* 忽略 */ }
+      if (shown) {
+        frontLog('托盘提示已提示过，跳过（避免每次启动都弹）');
+        return false;
+      }
+      try { localStorage.setItem(KEY, '1'); } catch { /* 忽略 */ }
       frontLog(`notice ${text}`);
       // WAITING 类的 expiresAt 是 null（不自动过期），ref 保证只留一条。
       bubbles.push({

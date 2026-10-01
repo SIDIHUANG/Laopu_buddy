@@ -838,12 +838,14 @@ fn elevation_report() -> String {
 
 /// 托盘不可用时的兜底提示 + 键盘逃生入口。
 ///
-/// 背景（OPEN-ISSUES 问题 2 / 问题 1）：
-///   * 这台机器上 `Shell_NotifyIcon` 返回 ACCESS_DENIED，托盘图标永远不出现；
+/// 背景（OPEN-ISSUES 问题 1.1）：
+///   * 这台机器上 `Shell_NotifyIcon` 返回 ACCESS_DENIED（提权=否，已排除提权），
+///     托盘图标永远不出现；这一条已**降级为已知限制**，不再继续查；
 ///   * 而"托盘右键菜单"是 v1 唯一的可靠入口 —— 托盘没了，用户就只能靠
 ///     桌宠的右键菜单，可那需要他先精确点到角色身上。
 /// 所以这里补两件事：
-///   1) 托盘注册失败时，让前端弹一条常驻提示（告诉用户右键角色就够了）；
+///   1) 托盘注册失败时，让前端提示一次（只一次：是否已提示由前端用
+///      localStorage 记账，见 main.js 的 `notice()`）；
 ///   2) 注册一个**全局**热键 Ctrl+Alt+Q（退出）与 Ctrl+Alt+S（设置），
 ///      这样即使窗口被拖到屏幕外/整块穿透，用户也一定退得掉。
 #[cfg(windows)]
@@ -859,17 +861,18 @@ fn install_escape_hatches(app: &AppHandle, tray_ok: bool) {
     if tray_ok {
         return;
     }
-    // 让前端在 boot 完成后弹一条提示（前端可能还没起来，所以轮询式重试）
+    // 让前端在 boot 完成后提示一次。前端可能还没起来，所以少量重试；
+    // eval 成功即停 —— 否则会在每次重试里再弹一遍（会变成骚扰）。
     let w = app.get_webview_window("main");
     std::thread::spawn(move || {
         let Some(w) = w else { return };
-        for _ in 0..30 {
+        for _ in 0..20 {
             std::thread::sleep(Duration::from_millis(500));
             let js = "window.PresagePet && window.PresagePet.notice \
                       && window.PresagePet.notice('托盘图标被系统拒绝注册：右键我 → 设置/退出；\
 或按 Ctrl+Alt+S 设置、Ctrl+Alt+Q 退出')";
             if w.eval(js).is_ok() {
-                logln("[tray] 已提示前端：托盘不可用，请用右键菜单或 Ctrl+Alt+Q/S");
+                logln("[tray] 已请求前端提示（是否真的显示由前端记账，只会显示一次）");
                 return;
             }
         }

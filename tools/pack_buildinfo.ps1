@@ -19,7 +19,14 @@ $files = @(
 $L = New-Object System.Collections.ArrayList
 [void]$L.Add('普瑞塞斯桌宠 v1.1  -  BUILD.txt')
 [void]$L.Add("生成时间 : $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')")
-[void]$L.Add("git 提交 : $commit（提交后以 git log 为准）")
+# 把 HEAD 上的 tag 也写进来：核对版本时"tag 名"比"短 sha"好认得多
+$tagsAtHead = (& git -C $Root tag --points-at HEAD) 2>$null
+if ($tagsAtHead) {
+  [void]$L.Add("基线 tag : $($tagsAtHead -join ', ')")
+  [void]$L.Add("git 提交 : $commit")
+} else {
+  [void]$L.Add("git 提交 : $commit（HEAD 上没有 tag）")
+}
 [void]$L.Add('')
 [void]$L.Add('【自包含】双击 v1\启动桌宠.bat 即可，不需要工程根目录。')
 [void]$L.Add('  包内必须包含 tools\ 与 app\src\ —— 桥接会 import 后者。')

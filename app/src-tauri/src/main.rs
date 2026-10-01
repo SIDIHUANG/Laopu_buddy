@@ -11,12 +11,17 @@
 //      推送的是**归一化格子**（64×64），与 DPI 无关。
 //   3. 迟滞切换：进入命中区立刻可交互；离开后等 220ms 才切回穿透。
 //      否则快速划过边缘会「吞掉」第一次点击，且悬停光标会闪烁。
-#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
-
+//
 // 不要控制台窗口：桌宠是纯 GUI 程序，用户双击 exe 时不该弹出一个黑框
 // （实测用户截图：双击后跟着一个 cmd 黑框，很不像成品）。
 // 代价是 println! 没有去处，所以日志改为**同时写文件**（见 logln），
 // 排查不再依赖有没有控制台可以重定向。
+//
+// ⚠️ 只写这一条，**不要**再写 `cfg_attr(not(debug_assertions), …)`：
+// 两条同时存在时，release 构建会因为后者覆盖前者而报
+// "unused attribute"（而且编译器提示这将来会变成硬错误）。
+// v1.1 清告警时才发现 —— 无条件写"windows"对 release 正是我们要的，
+// debug 下多一个无控制台也无所谓（日志本来就落到文件）。
 #![windows_subsystem = "windows"]
 
 use std::sync::{Arc, Mutex};
@@ -223,7 +228,7 @@ mod native_tray {
                     GetProcessWindowStation, GetThreadDesktop, GetUserObjectInformationW, UOI_NAME,
                 };
                 use windows_sys::Win32::System::Threading::GetCurrentThreadId;
-                let mut get = |h: HANDLE| -> String {
+                let get = |h: HANDLE| -> String {
                     let mut buf = [0u16; 128];
                     let mut need = 0u32;
                     let ok = GetUserObjectInformationW(
@@ -506,11 +511,16 @@ fn apply_pet_appearance(app: AppHandle, patch: serde_json::Value) {
     }
 }
 
-/// 托盘图标（隐藏图标栏里那个小图标）。
+/// 托盘图标（**非 Windows 平台的兜底**）。
 ///
 /// 为什么必须有：桌宠窗口可以整块点击穿透、也常常被拖到屏幕边缘，
 /// 一旦"点不到/找不到窗口"，用户就没有任何入口能打开设置或退出。
 /// 托盘是最后一道可靠的入口，所以菜单里必须同时有设置和退出。
+///
+/// ⚠️ Windows 上走的是 `native_tray`（直接调 Shell_NotifyIcon，带诊断日志），
+/// 这个函数只在别的平台用。`#[cfg_attr]` 是为了让 Windows 构建不再报
+/// "function is never used" —— 基线不该带着无意义的告警。
+#[cfg_attr(windows, allow(dead_code))]
 fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
     let show = MenuItem::with_id(app, "toggle", "显示 / 隐藏桌宠", true, None::<&str>)?;
     let settings = MenuItem::with_id(app, "settings", "设置…", true, None::<&str>)?;

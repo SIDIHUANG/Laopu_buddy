@@ -4,6 +4,56 @@
 > 本文档第 0 节下面是 **v1 的历史记录**，其中的"未解决问题"结论**已被 v1.1 更新**，
 > 读的时候以 OPEN-ISSUES.md 为准。
 
+---
+
+## ⚠️ 立基线前必读：哪些是"实测过"的，哪些只是"代码级检查过"
+
+一份基线最大的价值是**你下次能信任它**。所以这里把证据等级分清楚 ——
+**不要把 (B) 当成 (A) 用**。
+
+### (A) 有人在真机上亲眼/亲手确认过
+
+| 功能 | 确认方式 |
+|---|---|
+| 角色整只显示、可拖动、点击出台词 | 用户实测 |
+| 闲置进入 sleep / doze | 用户实测 |
+| 右键菜单 5 项全部可见（不同高度都不被裁） | 用户实测 |
+| 独立设置窗口能打开、面板有内容 | 用户实测 |
+| **设置里改"大小 / 透明度"实时生效到她身上** | 用户实测 + 日志里 12 行"外观已转发/收到" |
+| 状态跟随 DSH：进入 thinking / working | 用户实测 |
+| 启动器：桥接就绪 `ok=True`、无额外控制台窗口、profile 坏了自动重建 | 实测（含故意写坏 profile） |
+| 几何自检 `裁掉=0 出屏=0 气泡出框=0` | 每次启动的日志 |
+
+### (B) 只有代码级证据（改动很"结构性"，但没有人在真机上跑过那一条路径）
+
+| 待确认 | 代码依据 | 怎么确认 |
+|---|---|---|
+| **退出桌宠时收掉桥接进程** | `main.rs` 的 `kill_bridge_if_ours()` 挂在 `RunEvent::Exit`；只按 PID + `IMAGENAME eq node.exe` 过滤 | 右键→退出，看日志有没有 `[exit] 收尾：结束桥接进程 PID …`，再看任务管理器里 `pet_bridge` 是否消失 |
+| 全局热键 `Ctrl+Alt+S / Q` | `[hotkey] …=ok` 已打印（注册成功），但没人按过 | 按一下试试 |
+| 设置窗口与主窗口共享同一套 browser args（`0x8007139F` 的真因） | 差分检查：配置值 == 常量值，且 builder 已传入 | 属于 (A) —— 设置窗口能开就是它生效了 |
+| `boot.test.mjs` 能挡住 TDZ 复发 | 用"把 bug 放回去"验证过：修好的通过、复原后必然失败 | `node app/test/boot.test.mjs` |
+| 构建产物与源码一致 | `build_web.py` 的时间戳自查 + `pack_buildinfo.ps1` 的哈希自查 | 两条自查都带在脚本里 |
+
+### (C) 已知限制 / 明确不做（不是 bug，别再当 bug 查）
+
+| 项 | 状态 |
+|---|---|
+| **托盘图标**（`Shell_NotifyIcon` → `err=5`） | 用户决定**降级为已知限制**：不再排查；提示只在首次启动弹一次；入口用右键菜单或 `Ctrl+Alt+S/Q`。完整证据与后续排查清单见 OPEN-ISSUES 1.1 |
+| 气泡尾巴没有严格搭在头顶 | 用户决定先不改（原素材小人外面有一圈蓝线，会影响肉眼判断） |
+| 抠图残留（手臂与身体之间的浅灰缝） | 需要**从源素材**解决（导出带 alpha 的素材或纯色幕布），代码侧修不干净 |
+| 任务栏图标（`skipTaskbar` 无效） | 待办：改扩展样式 `WS_EX_TOOLWINDOW` |
+| `celebrate` 用的是难过脸 | 需要一张笑脸立绘；文件名带 `happy`/`开心`/`笑`/`smile` 会被管线自动识别 |
+| 链接期告警 `.rsrc merge failure: multiple non-default manifests` | **无害**（v1 就记录过，与运行无关） |
+
+### 我这边的环境限制（为什么有些事只能靠你）
+
+DSH 沙箱会话里**没有 `explorer.exe`**，所以 WebView2 起不来
+（连干净 profile 都返回 `0x8000FFFF`），托盘注册也必然失败。
+因此**凡是"窗口/画面/托盘"这一类，我无法自证** —— 上面 (B) 就是这么来的。
+详细证据见 OPEN-ISSUES 第 3 节。
+
+---
+
 ## v1.1 摘要（一句话版）
 
 **v1 的"角色几秒后只剩半截 / 整个消失"不是渲染或合成问题，而是布局几何从第一帧就错了：
@@ -11,7 +61,7 @@
 于是她的下半身一直在窗口外，被窗口裁掉；气泡又通过负 margin 拉着她一起动，
 所以"被裁掉的是哪一半"还会变。**
 
-修法（全部实测验证过）：
+修法：
 
 | # | 改动 | 文件 |
 |---|---|---|
@@ -19,15 +69,18 @@
 | 2 | 画布 / 命中盒 / 精灵格三者同尺寸（`HEADROOM = 0`），遮罩坐标 == 可见坐标 | `app/src/renderer.js` |
 | 3 | 角色 `bottom` 锚窗口底边、气泡 `bottom` 锚"头顶 + 8%"；删掉覆盖 `position` 的重复规则 | `app/index.html` |
 | 4 | 状态抖动：防抖记账只在候选变化时写时间戳 + 一次性动画按优先级抢占 | `app/src/arbiter.js` |
-| 5 | 启动器重写：唯一实现、`start /b` 直启（无 powershell 中间层）、profile 坏了自动重建 | `启动桌宠.bat` |
-| 6 | 几何自检日志（`[geom:*] 裁掉=/出屏=/气泡出框=`）+ 提权自检 + 托盘不可用的热键退路 | `app/src/main.js` / `app/src-tauri/src/main.rs` |
-| 7 | 排障工具：`measure_sprites.py`（量真实包围盒）/ `see_pet.py`（抓屏幕像素）/ `set_size.mjs` | `tools/` |
+| 5 | 启动器重写：唯一实现、`start /b` 直启、profile 坏了自动重建、日志双候选 | `启动桌宠.bat` |
+| 6 | **按 Tauri 窗口 label 区分"我是哪个窗口"**（设置窗口改大小不再改自己） | `app/src/main.js` / `app/src/pointer.js` |
+| 7 | 几何自检 `[geom:*] 裁掉=/出屏=/气泡出框=`、提权自检、托盘不可用的热键退路 | `app/src/main.js` / `app/src-tauri/src/main.rs` |
+| 8 | 桥接：修 `findRollouts` 返回类型（新鲜度过滤失效 + 9MB 刷屏）、日志限流、无窗口启动、退出收尾 | `tools/pet_bridge.mjs` / `启动桌宠.bat` / `src-tauri/src/main.rs` |
+| 9 | 排障工具：`measure_sprites.py` / `see_pet.py` / `set_size.mjs` / `bridge_deps_probe.mjs` / `boot.test.mjs` | `tools/` `app/test/` |
 
-**验收命令**（三档尺寸都不许被裁 + 肉眼看整只都在）：
+**验收命令**：
 
 ```powershell
 $env:PYTHONIOENCODING = "utf-8"; python tools\build_web.py
 cd app\src-tauri; cargo build --release; cd ..\..
+
 Copy-Item app\src-tauri\target\release\presage-pet.exe v1\ -Force
 Copy-Item app\src-tauri\target\release\WebView2Loader.dll v1\ -Force
 # （在 DSH 沙箱里跑：profile 必须放工作区内，见 OPEN-ISSUES 第 3 节）

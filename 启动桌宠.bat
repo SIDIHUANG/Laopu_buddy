@@ -164,7 +164,12 @@ if not errorlevel 1 (
 echo [i] 启动桥接（余额 / 台词库）...
 rem 先清掉上一轮的日志，避免新旧混在一起
 del /q "%BLOG%" >nul 2>nul
-start "presage-bridge" /min /d "%PETDIR%" cmd /c ""%NODE%" "%BRIDGE%" --out "%LOGDIR%\events" --port 8792 >> "%BLOG%" 2>&1"
+rem 用 PowerShell 的 -WindowStyle Hidden 启动：**没有控制台窗口**，输出进日志。
+rem 之前用 `start /min cmd /c node …` 会留下一个最小化的 presage-bridge 控制台 ——
+rem 用户实测反馈"多了一个进程窗口，关掉自检窗口后它还在"。改成隐藏启动。
+rem 注意：-PassThru 拿到的是 powershell 自己的 PID、不是 node 的，所以**桥接 PID 由
+rem 桥接自己写**进 --pidfile（见 pet_bridge.mjs）；桌宠退出时按它精确收尾。
+powershell -NoProfile -ExecutionPolicy Bypass -Command "Start-Process -FilePath '%NODE%' -ArgumentList @('%BRIDGE%','--out','%LOGDIR%\events','--port','8792','--pidfile','%LOGDIR%\bridge.pid') -WorkingDirectory '%PETDIR%' -WindowStyle Hidden -RedirectStandardOutput '%BLOG%' -RedirectStandardError '%LOGDIR%\bridge.err.log'" >nul 2>nul
 ping -n 4 127.0.0.1 > nul
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
   "try { $r = Invoke-WebRequest 'http://127.0.0.1:8792/health' -UseBasicParsing -TimeoutSec 4; $j = $r.Content | ConvertFrom-Json; Write-Host ('[i] 桥接就绪 ok=' + $j.ok + ' DSH 会话=' + $j.dsh.sessions + ' 已产事件=' + $j.produced) } catch { Write-Host '[x] 桥接没有起来（/health 无响应）—— 详见 runtime\bridge.log' }" 2>nul

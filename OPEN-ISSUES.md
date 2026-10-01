@@ -190,6 +190,25 @@ v1 的启动器有两个结构性毛病：
 
 ---
 
+### 0.7 用户第二轮实测（v1.1 第六轮）
+
+| 现象 | 根因 | 修法 |
+|---|---|---|
+| **拖动设置里的"大小"滑块，变大变小的是设置窗口自己**；小人的大小要**重启才生效** | 判断"我是不是独立设置窗口"只看 URL 参数 `?view=settings`，而 native 侧 `WebviewUrl::App` **不能带查询串**（带了会被当文件路径 → 白屏），所以设置窗口拿的是普通 index.html，`viewMode` 恒为 false → 走"就地应用"分支，**永远不转发** | 改按 **Tauri 窗口 label** 判断（`settings` / `main`），新增 `pointer.js` 的 `windowLabel()`；判据同时写进日志（`窗口角色：label=… viewMode=…`），以后一眼可见 |
+| 多出一个 **presage-bridge 控制台窗口**，关掉自检窗口后它还在；点桌宠"退出"后 bridge 仍在跑 | 用 `start /min cmd /c node …` 启动 → 留下一个最小化控制台 | 改用 `powershell Start-Process -WindowStyle Hidden -RedirectStandardOutput`：**无窗口**、输出进 `runtime\bridge.log` |
+| 退出桌宠后 bridge 不关闭 | 没有任何收尾逻辑 | 桥接自己写 `runtime\bridge.pid`（`--pidfile`；因为 `-PassThru` 拿到的是 powershell 的 PID，不是 node 的）；桌宠退出时在 `RunEvent::Exit` 里按 PID + **镜像名过滤**收尾（`taskkill /PID <pid> /FI "IMAGENAME eq node.exe"`）。**绝不能**按名字杀 node —— 用户机器上有别的 node |
+
+同时确认（用户实测）：**进入 think / work 正常** —— 桥接那条链已经通了。
+
+#### 又一条方法论教训：不要拿"在 exe 里搜字符串"判断前端有没有被编进去
+
+排查时我在 exe 里搜本轮新增的前端字符串，搜不到，一度以为"前端根本没被嵌进 exe"。
+实际是 **tauri 会把资产 Brotli 压缩**（资产文件头 `1B 66 06 00`），明文搜索**永远搜不到**。
+
+现在改成看**时间戳**：`tools/build_web.py` 结尾会检查
+`target/release/build/*/out/tauri-codegen-assets/` 里的资产是否比 `app/dist` 新，
+并明确打印"✓ 前端已被编进 exe"或"⚠ 前端比 exe 新，请重新 cargo build"。
+（另外注意：build 目录里有**多个**指纹目录，别只读一个 —— 我也差点被一个旧的骗了。）
 ## 1. 🟡 仍未解决（按用户决定处理）
 
 ### 1.1 【已降级为已知限制】托盘图标不出现（`Shell_NotifyIcon` → `ACCESS_DENIED`）

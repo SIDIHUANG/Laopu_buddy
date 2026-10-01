@@ -55,6 +55,12 @@ function defaultOutDir() {
   return path.join(process.cwd(), 'runtime', 'events');
 }
 const OUT_DIR = opt('out', defaultOutDir());
+/**
+ * PID 文件路径（可选）。由 launcher 传入，桥接启动时写入自己的 PID、
+ * 退出时删除 —— 供"桌宠退出时一起收尾"使用。
+ * 默认放在 out 目录的上一级（也就是 runtime\bridge.pid）。
+ */
+const PID_FILE = opt('pidfile', '');
 
 // --------------------------------------------------------------------------- //
 // 限流日志
@@ -600,7 +606,42 @@ setInterval(() => {
   for (const res of clients) res.write(': ping\n\n');
 }, 15000);
 
+/**
+ * PID 文件：launcher 传进来的话，桥接**自己**把 PID 写进去，退出时删掉。
+ *
+ * 为什么由桥接自己写（而不是启动器写）：启动器 `Start-Process ... -PassThru`
+ * 拿到的是 `powershell.exe` 的 PID（我们是用 powershell 隐藏启动它的），
+ * 不是 node 的 PID —— 按那个 PID 收尾会杀错进程。
+ * 加上**跨会话**的考虑：只有进程自己知道自己的 PID，写出来最准。
+ *
+ * 用途：桌宠退出时按这个 PID 精确收尾（见 app/src-tauri 的退出处理），
+ * 让"退出桌宠"真的把桥接一起带走，而不是留下一个后台进程。
+ */
+if (PID_FILE) {
+  try {
+    const dir = path.dirname(PID_FILE);
+    if (dir && dir !== '.' && !fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(PID_FILE, String(process.pid));
+    console.log(`  PID 文件: ${PID_FILE}（${process.pid}）`);
+  } catch (e) {
+    // 不静默：写不了 PID 文件的后果是"退出桌宠时收不掉桥接"，
+    // 属于用户能感知的行为差异，值得留一行（v1.1 第一版就是这样漏掉的）。
+    console.log(`  [warn] 写 PID 文件失败 ${PID_FILE}: ${e.message}`);
+  }
+}
+
+const cleanupPidFile = () => {
+  if (!PID_FILE) return;
+  try { fs.rmSync(PID_FILE, { force: true }); } catch { /* 忽略 */ }
+};
+
 process.on('SIGINT', () => {
   console.log(`\n退出。产生事件 ${produced}，忽略 ${ignored}，坏行 ${parseErrors}`);
+  cleanupPidFile();
   process.exit(0);
 });
+process.on('SIGTERM', () => {
+  cleanupPidFile();
+  process.exit(0);
+});
+process.on('exit', cleanupPidFile);

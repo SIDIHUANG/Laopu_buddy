@@ -14,7 +14,7 @@ import { BubbleQueue, BUBBLE } from './bubbles.js';
 import { LiveSource } from './sources/live.js';
 import {
   PointerBridge, frontLog, isTauri, tauriWindow, tauriLogicalSize, tauriPhysicalPosition,
-  tauriInvoke,
+  tauriInvoke, windowLabel,
 } from './pointer.js';
 import { Interactions } from './interactions.js';
 import { applyBubbleSkin } from './bubble-skin.js';
@@ -49,12 +49,25 @@ async function boot() {
   const params = new URLSearchParams(location.search);
   const debug = params.get('debug') === '1';
   /**
-   * 独立设置窗口模式（Rust 用 ?view=settings 打开第二个窗口）。
-   * 这样设置面板不必挤进桌宠窗口，桌宠窗口也就完全不用改尺寸/位置
-   * —— 之前"打开设置就看不到桌宠"的根本解法。
+   * 判断"我是不是那个独立设置窗口"。
+   *
+   * ⚠️ 这里踩过一个很贵的坑：v1.1 之前只按 URL 参数判断
+   * （`?view=settings`），但 native 侧的 `WebviewUrl::App` **不能带查询串**
+   * （带了会被当成文件路径 → 白屏，见 open_settings_window 的注释），
+   * 所以设置窗口实际是拿一个**普通** index.html 打开的，`viewMode` 恒为 false。
+   *
+   * 后果（用户实测两轮都报到）：设置窗口里拖"大小"滑块时，
+   * 它走的是"就地应用"那条路 → **变大变小的是设置窗口自己**，
+   * 而"转发给桌宠窗口"的分支永远不执行 → 小人的大小要**重启才生效**。
+   *
+   * 现在改成按 **Tauri 窗口 label** 判断（`settings` / `main`），
+   * 不以 URL 为准；URL 参数只作为浏览器里预览时的兜底。
+   * 判据同时写进日志，以后这类"这到底是哪个窗口"的问题一眼可见。
    */
-  const viewMode = params.get('view') === 'settings';
+  const winLabel = windowLabel();
+  const viewMode = winLabel === 'settings' || params.get('view') === 'settings';
   if (viewMode) document.body.classList.add('settings-window');
+  frontLog(`窗口角色：label=${winLabel || '(浏览器)'} viewMode=${viewMode}`);
 
   // 数据源配置必须在最前面定下来：后面的设置页、指针桥、事件源都要用 bridgeUrl。
   // （之前把它写在几百行之后，设置页引用时触发 TDZ，整个前端直接不启动。）

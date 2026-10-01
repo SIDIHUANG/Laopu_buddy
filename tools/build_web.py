@@ -76,6 +76,48 @@ def check_imports(src_dir: Path, html: Path) -> int:
     return 0
 
 
+def check_embed_freshness() -> int:
+    """检查「前端是否已经被编进 exe」——看 tauri 生成的资产是不是比 dist 新。
+
+    为什么需要这一步：**前端是编译期嵌进 exe 的**，改了 dist 不重新 cargo build，
+    exe 里跑的还是旧前端。v1.1 排查时在这上面绕过一圈：拿字符串在 exe 里搜
+    新代码，搜不到就以为"没嵌进去" —— 其实 tauri 会把资产 **Brotli 压缩**，
+    明文搜索永远搜不到（实测资产文件头是 `1B 66 06 00`，是 brotli 流）。
+
+    所以判据只能是**时间戳**：tauri 会在 target/release/build/*/out/
+    tauri-codegen-assets/ 下生成每个资产的压缩副本；只要它比 dist 里最新的
+    文件还新，就说明嵌入过。这里只提示、不失败（dist 刚改还没 build 是正常的），
+    但把"该重新 build 了"说得很清楚。
+    """
+    build_root = APP / "src-tauri" / "target" / "release" / "build"
+    if not build_root.exists():
+        return 0
+    newest_dist = max(
+        (p.stat().st_mtime for p in DIST.rglob("*") if p.is_file()),
+        default=0,
+    )
+    newest_asset = 0.0
+    # 直接递归找 `tauri-codegen-assets` 目录：cargo 的 build 输出目录名带指纹，
+    # 按名字猜（presage-pet-*）不可靠 —— 实测还有别的指纹目录同时存在。
+    for assets in build_root.rglob("tauri-codegen-assets"):
+        if not assets.is_dir():
+            continue
+        for p in assets.glob("*"):
+            newest_asset = max(newest_asset, p.stat().st_mtime)
+    if newest_asset == 0:
+        print("  ⚠ 没找到 tauri 的资产副本：还没 build 过原生壳（cargo build --release）")
+        return 0
+    if newest_asset + 1 < newest_dist:
+        print("  ⚠ 前端比 exe 新 —— exe 里跑的还是旧前端，请重新:")
+        print("      cd app/src-tauri; cargo build --release")
+        print(f"      （dist 最新 {newest_dist:.0f} > 资产 {newest_asset:.0f}）")
+    else:
+        print("  ✓ 前端已被编进 exe（资产副本不比 dist 旧）")
+    # 提醒：字符串搜 exe 是无效判据
+    print("    备注：不要用「在 exe 里搜前端字符串」判断是否嵌入 —— 资产是 Brotli 压缩的")
+    return 0
+
+
 def main() -> int:
     if not (ASSETS / "manifest.json").exists():
         print("缺少 assets/manifest.json，先跑 tools/build_sprites.py")
@@ -112,6 +154,7 @@ def main() -> int:
     print(f"dist 就绪: {DIST}")
     print(f"  index.html + src/ + assets/manifest.json + {n} 个状态 strip")
     print(f"  合计 {total / 1024 / 1024:.2f} MB")
+    check_embed_freshness()
     print("\n浏览器预览：  python -m http.server 8791 --directory app/dist")
     print("然后打开     http://127.0.0.1:8791/?debug=1")
     return 0

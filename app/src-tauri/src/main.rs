@@ -426,6 +426,65 @@ fn open_settings(app: AppHandle) {
     });
 }
 
+/// 从 `runtime\bridge.pid` 读出桥接进程的 PID。
+///
+/// PID 由**桥接自己**写（`pet_bridge.mjs --pidfile`）—— 因为启动器是用
+/// `powershell Start-Process -WindowStyle Hidden` 隐藏拉起它的，
+/// `-PassThru` 拿到的是 powershell 自己的 PID，不是 node 的；
+/// 按那个 PID 收尾会杀错进程。只有进程自己知道自己的 PID。
+fn read_bridge_pid() -> Option<u32> {
+    // 工作目录就是 exe 所在目录（启动器用 start /d 指定），日志也写在它下面
+    let path = std::path::PathBuf::from("runtime").join("bridge.pid");
+    let text = std::fs::read_to_string(&path).ok()?;
+    text.trim().parse::<u32>().ok()
+}
+
+/// 退出时收掉由启动器拉起的桥接进程。
+///
+/// 为什么需要（用户实测反馈）："点击桌宠退出后这个 bridge 仍然没有关闭" ——
+/// 留下一个看不见的后台 node 进程，用户既不知道它在跑，也不知道怎么收。
+///
+/// 安全措施（很重要）：**绝不能**用 `taskkill /im node.exe` 一类的按名字杀 ——
+/// 用户的机器上还有别的 node（我自己的诊断工具就是 node）。
+/// 这里两条都用上：
+///   1) 先按 PID 查进程，确认**镜像名是 node.exe** 才动手；
+///   2) 交给 `taskkill /PID <pid> /FI "IMAGENAME eq node.exe" /F`，
+///      让 taskkill 再做一次镜像名过滤。
+/// 任何一步不对就只写日志、不杀。
+fn kill_bridge_if_ours() {
+    let Some(pid) = read_bridge_pid() else {
+        return; // 没有 PID 文件（比如桌宠不是启动器拉起的）→ 什么都不做
+    };
+    unsafe {
+        use windows_sys::Win32::System::Threading::{
+            OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION,
+        };
+        let h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+        if h.is_null() {
+            return; // 进程已经不在了
+        }
+        let mut buf = [0u16; 512];
+        let mut len = buf.len() as u32;
+        let ok = QueryFullProcessImageNameW(h, PROCESS_NAME_WIN32, buf.as_mut_ptr(), &mut len);
+        windows_sys::Win32::Foundation::CloseHandle(h);
+        if ok == 0 {
+            return;
+        }
+        let name = String::from_utf16_lossy(&buf[..len as usize]).to_lowercase();
+        if !name.ends_with("node.exe") {
+            logln(format!("[exit] PID {pid} 不是 node.exe（{name}），不收尾"));
+            return;
+        }
+    }
+    logln(format!("[exit] 收尾：结束桥接进程 PID {pid}"));
+    let _ = std::process::Command::new("taskkill")
+        .args(["/PID", &pid.to_string(), "/FI", "IMAGENAME eq node.exe", "/F"])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
+    let _ = std::fs::remove_file(std::path::PathBuf::from("runtime").join("bridge.pid"));
+}
+
 /// 把外观改动转发给**桌宠窗口**。
 ///
 /// 为什么需要：设置跑在独立窗口里，前端的 `applyAppearance` 里的 `win`
@@ -1005,6 +1064,16 @@ fn main() {
             set_hitmask, set_pointer_mode, front_log, runtime_config, open_settings,
             apply_pet_appearance
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|_app, event| {
+            // 退出时收掉启动器拉起的桥接进程（见 kill_bridge_if_ours 的说明）。
+            // 放在 RunEvent::Exit 而不是 Drop/panic hook：用户点"退出"走的就是这条路。
+            #[cfg(windows)]
+            if let tauri::RunEvent::Exit = event {
+                kill_bridge_if_ours();
+            }
+            #[cfg(not(windows))]
+            let _ = event;
+        });
 }

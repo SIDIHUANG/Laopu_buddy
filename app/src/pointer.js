@@ -82,6 +82,28 @@ export function placeMenu(cursorX, cursorY, menuW, menuH, winW, winH, margin = 4
   };
 }
 
+/**
+ * 当前窗口的 Tauri label（`main` / `settings`）；浏览器里返回空串。
+ *
+ * 为什么需要它：判断"我是不是独立设置窗口"**不能只看 URL 参数**。
+ * native 侧的 `WebviewUrl::App` 不能带查询串（会被当文件路径 → 白屏），
+ * 所以设置窗口拿到的是一个普通 index.html，`?view=settings` 永远不存在。
+ * 按 label 判断才是可靠依据 —— 这个判据出错时的现象很隐蔽：
+ * 拖设置里的"大小"滑块会**把设置窗口自己变大变小**，而小人要重启才生效
+ * （用户实测报了两轮）。
+ *
+ * label 是同步可读的属性（Tauri 2 的 Window.label），失败就返回空串。
+ */
+export function windowLabel() {
+  if (!isTauri) return '';
+  try {
+    const w = TAURI.window.getCurrentWindow();
+    return String(w?.label || '');
+  } catch {
+    return '';
+  }
+}
+
 /** 前端诊断信息 → native stdout（＝ runtime/pet.out.log）。页面没有别的可读输出通道。 */
 export function frontLog(msg) {
   if (isTauri) {
